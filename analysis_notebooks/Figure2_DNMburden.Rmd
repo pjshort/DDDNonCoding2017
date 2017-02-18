@@ -1,0 +1,405 @@
+---
+title: "De Novo Burden (Figure 3)"
+author: "Patrick Short"
+date: "24 September 2016"
+output: html_document
+---
+
+```{bash}
+#intersect the DNMs with DHS data
+# overlap with DHS peaks
+cd ~/software/SingletonMetric/python
+bsub -R'select[mem>1000] rusage[mem=1000]' -M1000 -o $pjs/REP/DNM_DHS \
+python -u DNaseOverlap.py --variants ~/reference_data/de_novos.ddd_8k.noncoding_included.2016-06-23.txt \
+--variants_out ~/reference_data/de_novos.ddd_8k.noncoding_included.2016-06-23.DHS_broad_peak_fdr_0.01.AllRoadmapTissues.txt \
+--roadmap_epigenome_ids /lustre/scratch113/projects/ddd/users/ps14/REP/all_roadmap_tissue_ids.txt --use_fdr
+
+```
+
+```{r load data}
+library(stringr)
+source("../R/annotation_tools.R")
+
+conserved = read.table("../data/conserved_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+enhancers = read.table("../data/enhancer_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+heart = read.table("../data/heart_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+control_elements = read.table("../data/noncoding_control_elements.10bp_buffer.min10_coverage.30bp_element_minimum.30x_probe_coverage_minimum.no_ddg2p_overlap.txt", header = TRUE, sep = "\t")
+
+obs = read.table("../data/de_novos.ddd_8k.noncoding_included.2016-06-23.DHS_broad_peak_fdr_0.01.AllRoadmapTissues.txt", header = TRUE, sep = "\t")
+obs = subset(obs, pp_dnm > 0.00781)
+obs = subset(obs, nchar(as.character(ref)) == 1 & nchar(as.character(alt)) == 1)
+
+blacklist = read.table("../data/all_stable_id_blacklist", header = FALSE, sep = "\t")
+blacklist_kinship = read.table("../data/8K_kinship_blacklist.txt", header = FALSE, sep = "\t")
+blacklist = unique(c(as.character(blacklist$V1), as.character(blacklist_kinship$V1)))
+
+obs = subset(obs, !(person_stable_id %in% blacklist))
+
+diagnosed = read.table("../data/ddd_8k.diagnosed.2016-06-23.txt", header = TRUE, sep = "\t")
+diagnosed = subset(diagnosed, !(person_id %in% blacklist))
+diagnosed_sim_ids = seq(1, length(unique(diagnosed$person_id)))
+obs_diagnosed = subset(obs, person_stable_id %in% diagnosed$person_id)
+obs_undiagnosed = subset(obs, !(person_stable_id %in% diagnosed$person_id))
+
+# load the file indicating whether proband has neurodev disorder (also used to get number of probands on blacklist)
+has_neurodev = read.table("../data/ddd_8k_probands.neurodev_terms.txt", header = TRUE, sep = "\t")
+has_neurodev$has_neurodev_phenotype = ifelse(has_neurodev$has_neurodev_phenotype == "True", TRUE, FALSE)
+n_children_removed = sum(has_neurodev$person_stable_id %in% blacklist)
+has_neurodev = subset(has_neurodev, !(person_stable_id %in% blacklist))
+has_neurodev$diagnosed = has_neurodev$person_stable_id %in% diagnosed$person_id
+
+# simulated data with DNase hypersensitivity annotations
+sim = read.table("../data/noncoding_sim.1k_runs.8k.8August2016.DHS_broad_peak_fdr_0.01.AllRoadmapTissues.txt", header = TRUE, sep = "\t")
+sim$id_number = as.numeric(str_split_fixed(sim$person_stable_id, "\\.", 4)[,2])
+sim = subset(sim, id_number <= (7952 - n_children_removed))
+
+sim_diagnosed = subset(sim, id_number %in% diagnosed_sim_ids)
+sim_undiagnosed = subset(sim, !(id_number %in% diagnosed_sim_ids))
+
+```
+
+By element set:
+
+```{r conserved elements only}
+# intronic controls
+control_diagnosed_obs = nrow(filter_with_bed(obs_diagnosed, control_elements))
+control_diagnosed_sim = filter_with_bed(sim_diagnosed, control_elements)
+control_diagnosed_sim = sapply(split(control_diagnosed_sim, control_diagnosed_sim$iteration), nrow)
+control_diagnosed_95 = quantile(control_diagnosed_sim, seq(0,1,0.025))[c(2,40)]
+control_diagnosed_p = sum(control_diagnosed_sim >= control_diagnosed_obs)/length(control_diagnosed_sim)
+
+# intronic controls
+control_undiagnosed_obs = nrow(filter_with_bed(obs_undiagnosed, control_elements))
+control_undiagnosed_sim = filter_with_bed(sim_undiagnosed, control_elements)
+control_undiagnosed_sim = sapply(split(control_undiagnosed_sim, control_undiagnosed_sim$iteration), nrow)
+control_undiagnosed_95 = quantile(control_undiagnosed_sim, seq(0,1,0.025))[c(2,40)]
+control_undiagnosed_p = sum(control_undiagnosed_sim >= control_undiagnosed_obs)/length(control_undiagnosed_sim)
+
+# heart elements
+heart_diagnosed_obs = nrow(filter_with_bed(obs_diagnosed, heart))
+heart_diagnosed_sim = filter_with_bed(sim_diagnosed, heart)
+heart_diagnosed_sim = sapply(split(heart_diagnosed_sim, heart_diagnosed_sim$iteration), nrow)
+heart_diagnosed_95 = quantile(heart_diagnosed_sim, seq(0,1,0.025))[c(2,40)]
+heart_diagnosed_p = sum(heart_diagnosed_sim >= heart_diagnosed_obs)/length(heart_diagnosed_sim)
+
+# heart elements
+heart_undiagnosed_obs = nrow(filter_with_bed(obs_undiagnosed, heart))
+heart_undiagnosed_sim = filter_with_bed(sim_undiagnosed, heart)
+heart_undiagnosed_sim = sapply(split(heart_undiagnosed_sim, heart_undiagnosed_sim$iteration), nrow)
+heart_undiagnosed_95 = quantile(heart_undiagnosed_sim, seq(0,1,0.025))[c(2,40)]
+heart_undiagnosed_p = sum(heart_undiagnosed_sim >= heart_undiagnosed_obs)/length(heart_undiagnosed_sim)
+
+#enhancer - diagnosed
+enhancer_diagnosed_obs = nrow(filter_with_bed(obs_diagnosed, enhancers))
+enhancer_diagnosed_sim = filter_with_bed(sim_diagnosed, enhancers)
+enhancer_diagnosed_sim = sapply(split(enhancer_diagnosed_sim, enhancer_diagnosed_sim$iteration), nrow)
+enhancer_diagnosed_95 = quantile(enhancer_diagnosed_sim, seq(0,1,0.025))[c(2,40)]
+enhancer_diagnosed_p = sum(enhancer_diagnosed_sim >= enhancer_diagnosed_obs)/length(enhancer_diagnosed_sim)
+
+#enhancer - undiagnosed
+enhancer_undiagnosed_obs = nrow(filter_with_bed(obs_undiagnosed, enhancers))
+enhancer_undiagnosed_sim = filter_with_bed(sim_undiagnosed, enhancers)
+enhancer_undiagnosed_sim = sapply(split(enhancer_undiagnosed_sim, enhancer_undiagnosed_sim$iteration), nrow)
+enhancer_undiagnosed_95 = quantile(enhancer_undiagnosed_sim, seq(0,1,0.025))[c(2,40)]
+enhancer_undiagnosed_p = sum(enhancer_undiagnosed_sim >= enhancer_undiagnosed_obs)/length(enhancer_undiagnosed_sim)
+
+#conserved - diagnosed
+conserved_diagnosed_obs= nrow(filter_with_bed(obs_diagnosed, conserved))
+conserved_diagnosed_sim = filter_with_bed(sim_diagnosed, conserved)
+conserved_diagnosed_sim = sapply(split(conserved_diagnosed_sim, conserved_diagnosed_sim$iteration), nrow)
+conserved_diagnosed_95 = quantile(conserved_diagnosed_sim, seq(0,1,0.025))[c(2,40)]
+conserved_diagnosed_p = sum(conserved_diagnosed_sim >= conserved_diagnosed_obs)/length(conserved_diagnosed_sim)
+
+#conserved - undiagnosed
+conserved_undiagnosed_obs = nrow(filter_with_bed(obs_undiagnosed, conserved))
+conserved_undiagnosed_sim = filter_with_bed(sim_undiagnosed, conserved)
+conserved_undiagnosed_sim = sapply(split(conserved_undiagnosed_sim, conserved_undiagnosed_sim$iteration), nrow)
+conserved_undiagnosed_95 = quantile(conserved_undiagnosed_sim, seq(0,1,0.025))[c(2,40)]
+conserved_undiagnosed_p = sum(conserved_undiagnosed_sim >= conserved_undiagnosed_obs)/length(conserved_undiagnosed_sim)
+
+elements_diagnosed = data.frame(set = c("Introns", "Heart Enhancers", "VISTA Enhancers", "Conserved"), observed = c(control_diagnosed_obs, heart_diagnosed_obs, enhancer_diagnosed_obs, conserved_diagnosed_obs), expected = c(median(control_diagnosed_sim), median(heart_diagnosed_sim), median(enhancer_diagnosed_sim), median(conserved_diagnosed_sim)), low = c(control_diagnosed_95[1], heart_diagnosed_95[1], enhancer_diagnosed_95[1], conserved_diagnosed_95[1]), high = c(control_diagnosed_95[2], heart_diagnosed_95[2], enhancer_diagnosed_95[2], conserved_diagnosed_95[2]), p = c(control_diagnosed_p, heart_diagnosed_p, enhancer_diagnosed_p, conserved_diagnosed_p), diagnosed = "Diagnosed")
+
+elements_undiagnosed = data.frame(set = c("Introns", "Heart Enhancers", "VISTA Enhancers", "Conserved"), observed = c(control_undiagnosed_obs, heart_undiagnosed_obs, enhancer_undiagnosed_obs, conserved_undiagnosed_obs), expected = c(median(control_undiagnosed_sim), median(heart_undiagnosed_sim), median(enhancer_undiagnosed_sim), median(conserved_undiagnosed_sim)), low = c(control_undiagnosed_95[1], heart_undiagnosed_95[1], enhancer_undiagnosed_95[1], conserved_undiagnosed_95[1]), high = c(control_undiagnosed_95[2], heart_undiagnosed_95[2], enhancer_undiagnosed_95[2], conserved_undiagnosed_95[2]), p = c(control_undiagnosed_p, heart_undiagnosed_p, enhancer_undiagnosed_p, conserved_undiagnosed_p), diagnosed = "Undiagnosed")
+
+
+```
+
+Plot the diagnosed and undiagnosed:
+
+```{r plot diag and undiagnosed}
+
+library(ggplot2)
+
+df = rbind(elements_undiagnosed, elements_diagnosed)
+df$set = factor(df$set, levels = c("Introns","Conserved", "VISTA Enhancers", "Heart Enhancers"), ordered = TRUE)
+
+ggplot(df) + geom_pointrange(aes(x = set, y = expected, ymin = low, ymax = high, color = diagnosed)) + 
+  scale_y_log10(breaks = c(20,50,100, 200, 500, 1000)) + coord_flip() + scale_color_manual(values = c("black", "blue")) +
+  geom_point(aes(x = set, y = observed), fill = "Red", position=position_dodge(width = 0.3), size = 4, shape = 23, alpha = 0.6) + theme_bw(base_size = 24) + 
+    theme(strip.text = element_text(color="black"), strip.background = element_rect(fill="white", size=0), panel.border = element_blank()) +
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+    theme(legend.title = element_blank(), legend.text = element_text(size = 22)) + xlab("") + ylab("De Novo Mutations (log scale)") + ggtitle("De Novo Mutations in Non-Coding Elements")
+
+
+
+elements_undiagnosed$set = factor(elements_undiagnosed$set, levels = c("Introns","Conserved", "VISTA Enhancers", "Heart Enhancers"), ordered = TRUE)
+
+ggplot(elements_undiagnosed) + geom_pointrange(aes(x = set, y = expected, ymin = low, ymax = high)) + 
+  scale_y_log10(breaks = c(20,50,100, 200, 500, 1000)) + coord_flip() + scale_color_manual(values = c("black", "blue")) +
+  geom_point(aes(x = set, y = observed), fill = "Red", position=position_dodge(width = 0.3), size = 4, shape = 23, alpha = 0.6) + theme_bw(base_size = 24) + 
+    theme(strip.text = element_text(color="black"), strip.background = element_rect(fill="white", size=0), panel.border = element_blank()) +
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+    theme(legend.title = element_blank(), legend.text = element_text(size = 22)) + xlab("") + ylab("De Novo Mutations (log scale)") + ggtitle("De Novo Mutations in Non-Coding Elements")
+
+```
+
+
+DNase hypersensitivity overlap:
+
+```{r dnase}
+# conserved non fetal brain
+conserved_undiagnosed_obs = filter_with_bed(obs_undiagnosed, conserved)
+conserved_non_fb_undiagnosed_obs = nrow(subset(conserved_undiagnosed_obs, !(E081 > 0 | E082 > 0)))
+conserved_undiagnosed_sim = filter_with_bed(sim_undiagnosed, conserved)
+conserved_non_fb_undiagnosed_sim = subset(conserved_undiagnosed_sim, !(E081 > 0 | E082 > 0))
+conserved_non_fb_undiagnosed_sim = sapply(split(conserved_non_fb_undiagnosed_sim, conserved_non_fb_undiagnosed_sim$iteration), nrow)
+conserved_non_fb_undiagnosed_95 = quantile(conserved_non_fb_undiagnosed_sim, seq(0,1,0.025))[c(2,40)]
+conserved_non_fb_undiagnosed_p = sum(conserved_non_fb_undiagnosed_sim >= conserved_non_fb_undiagnosed_obs)/length(conserved_non_fb_undiagnosed_sim)
+
+# conserved fetal brain
+conserved_undiagnosed_obs = filter_with_bed(obs_undiagnosed, conserved)
+conserved_fb_undiagnosed_obs = nrow(subset(conserved_undiagnosed_obs, E081 > 0 | E082 > 0))
+conserved_undiagnosed_sim = filter_with_bed(sim_undiagnosed, conserved)
+conserved_fb_undiagnosed_sim = subset(conserved_undiagnosed_sim, E081 > 0 | E082 > 0)
+conserved_fb_undiagnosed_sim = sapply(split(conserved_fb_undiagnosed_sim, conserved_fb_undiagnosed_sim$iteration), nrow)
+conserved_fb_undiagnosed_95 = quantile(conserved_fb_undiagnosed_sim, seq(0,1,0.025))[c(2,40)]
+conserved_fb_undiagnosed_p = sum(conserved_fb_undiagnosed_sim >= conserved_fb_undiagnosed_obs)/length(conserved_fb_undiagnosed_sim)
+
+
+# conserved non fetal brain diagnosed
+conserved_diagnosed_obs = filter_with_bed(obs_diagnosed, conserved)
+conserved_non_fb_diagnosed_obs = nrow(subset(conserved_diagnosed_obs, !(E081 > 0 | E082 > 0)))
+conserved_diagnosed_sim = filter_with_bed(sim_diagnosed, conserved)
+conserved_non_fb_diagnosed_sim = subset(conserved_diagnosed_sim, !(E081 > 0 | E082 > 0))
+conserved_non_fb_diagnosed_sim = sapply(split(conserved_non_fb_diagnosed_sim, conserved_non_fb_diagnosed_sim$iteration), nrow)
+conserved_non_fb_diagnosed_95 = quantile(conserved_non_fb_diagnosed_sim, seq(0,1,0.025))[c(2,40)]
+conserved_non_fb_diagnosed_p = sum(conserved_non_fb_diagnosed_sim >= conserved_non_fb_diagnosed_obs)/length(conserved_non_fb_diagnosed_sim)
+
+# conserved fetal brain diagnosed
+conserved_diagnosed_obs = filter_with_bed(obs_diagnosed, conserved)
+conserved_fb_diagnosed_obs = nrow(subset(conserved_diagnosed_obs, E081 > 0 | E082 > 0))
+conserved_diagnosed_sim = filter_with_bed(sim_diagnosed, conserved)
+conserved_fb_diagnosed_sim = subset(conserved_diagnosed_sim, E081 > 0 | E082 > 0)
+conserved_fb_diagnosed_sim = sapply(split(conserved_fb_diagnosed_sim, conserved_fb_diagnosed_sim$iteration), nrow)
+conserved_fb_diagnosed_95 = quantile(conserved_fb_diagnosed_sim, seq(0,1,0.025))[c(2,40)]
+conserved_fb_diagnosed_p = sum(conserved_fb_diagnosed_sim >= conserved_fb_diagnosed_obs)/length(conserved_fb_diagnosed_sim)
+
+
+dhs_all = data.frame(set = c("Conserved Undiagnosed\nNo Fetal Brain DNase", "Conserved Undiagnosed\nFetal Brain DNase", "Conserved Diagnosed\nNo Fetal Brain DNase", "Conserved Diagnosed\nFetal Brain DNase"), observed = c(conserved_non_fb_undiagnosed_obs, conserved_fb_undiagnosed_obs, conserved_non_fb_diagnosed_obs, conserved_fb_diagnosed_obs), expected = c(median(conserved_non_fb_undiagnosed_sim), median(conserved_fb_undiagnosed_sim), median(conserved_non_fb_diagnosed_sim), median(conserved_fb_diagnosed_sim)), low = c(conserved_non_fb_undiagnosed_95[1], conserved_fb_undiagnosed_95[1], conserved_non_fb_diagnosed_95[1], conserved_fb_diagnosed_95[1]), high = c(conserved_non_fb_undiagnosed_95[2], conserved_fb_undiagnosed_95[2], conserved_non_fb_diagnosed_95[2], conserved_fb_diagnosed_95[2]), p = c(conserved_non_fb_undiagnosed_p, conserved_fb_undiagnosed_p, conserved_non_fb_diagnosed_p, conserved_fb_diagnosed_p))
+
+dhs = data.frame(set = c("Conserved\nNo Fetal Brain DNase", "Conserved\nFetal Brain DNase"), observed = c(conserved_non_fb_undiagnosed_obs, conserved_fb_undiagnosed_obs), expected = c(median(conserved_non_fb_undiagnosed_sim), median(conserved_fb_undiagnosed_sim)), low = c(conserved_non_fb_undiagnosed_95[1], conserved_fb_undiagnosed_95[1]), high = c(conserved_non_fb_undiagnosed_95[2], conserved_fb_undiagnosed_95[2]), p = c(conserved_non_fb_undiagnosed_p, conserved_fb_undiagnosed_p))
+
+
+
+
+```
+
+How many DHS peaks is this?
+
+```{r DHS peaks}
+
+male_fb_dhs = read.table(gzfile("../data/E081-DNase.hotspot.fdr0.01.broad.bed.gz"), header = FALSE, sep = "\t")
+colnames(male_fb_dhs) = c("chr", "start", "stop", "id", "strength")
+
+
+female_fb_dhs = read.table(gzfile("../data/E082-DNase.hotspot.fdr0.01.broad.bed.gz"), header = FALSE, sep = "\t")
+colnames(female_fb_dhs) = c("chr", "start", "stop", "id", "strength")
+
+
+# get the DDD specific fetal brain DHS
+
+intersect_granges = function(b1, b2) {
+  # intersect any two dataframes with chr, start, and stop
+  b1 = GRanges(seqnames=Rle(b1$chr), ranges = IRanges(start = b1$start, end = b1$stop))
+  b2 = GRanges(seqnames=Rle(b2$chr), ranges = IRanges(start = b2$start, end = b2$stop))
+  i = intersect(b1, b2)
+  
+  new = data.frame(chr = as.character(i@seqnames),
+                   start = as.integer(i@ranges@start),
+                   stop = as.integer(i@ranges@start + i@ranges@width - 1))
+  return(new)
+}
+
+union_granges = function(b1, b2) {
+  # intersect any two dataframes with chr, start, and stop
+  b1 = GRanges(seqnames=Rle(b1$chr), ranges = IRanges(start = b1$start, end = b1$stop))
+  b2 = GRanges(seqnames=Rle(b2$chr), ranges = IRanges(start = b2$start, end = b2$stop))
+  i = union(b1, b2)
+  
+  new = data.frame(chr = as.character(i@seqnames),
+                   start = as.integer(i@ranges@start),
+                   stop = as.integer(i@ranges@start + i@ranges@width - 1))
+  return(new)
+}
+
+fb_dhs = union_granges(male_fb_dhs, female_fb_dhs)
+n_peaks = nrow(intersect_granges(fb_dhs, conserved))
+
+
+```
+
+Using the chromHMM annotation:
+
+```{r chromHMM}
+
+conserved_fb_active = read.table("../data/conserved_elements.min10_coverage.fb_active_roadmap_union.txt", header = TRUE, sep = "\t")
+conserved_fb_inactive = read.table("../data/conserved_elements.min10_coverage.fb_quiescent_roadmap_union.txt", header = TRUE, sep = "\t")
+
+# conserved quiescent undiagnosed
+conserved_quiescent_undiagnosed_obs = nrow(filter_with_bed(obs_undiagnosed, conserved_fb_inactive))
+conserved_quiescent_undiagnosed_sim = filter_with_bed(sim_undiagnosed, conserved_fb_inactive)
+conserved_quiescent_undiagnosed_sim = sapply(split(conserved_quiescent_undiagnosed_sim, conserved_quiescent_undiagnosed_sim$iteration), nrow)
+conserved_quiescent_undiagnosed_95 = quantile(conserved_quiescent_undiagnosed_sim, seq(0,1,0.025))[c(2,40)]
+conserved_quiescent_undiagnosed_p = sum(conserved_quiescent_undiagnosed_sim >= conserved_quiescent_undiagnosed_obs)/length(conserved_quiescent_undiagnosed_sim)
+
+# conserved fb_active undiagnosed
+conserved_fb_active_undiagnosed_obs = nrow(filter_with_bed(obs_undiagnosed, conserved_fb_active))
+conserved_fb_active_undiagnosed_sim = filter_with_bed(sim_undiagnosed, conserved_fb_active)
+conserved_fb_active_undiagnosed_sim = sapply(split(conserved_fb_active_undiagnosed_sim, conserved_fb_active_undiagnosed_sim$iteration), nrow)
+conserved_fb_active_undiagnosed_95 = quantile(conserved_fb_active_undiagnosed_sim, seq(0,1,0.025))[c(2,40)]
+conserved_fb_active_undiagnosed_p = sum(conserved_fb_active_undiagnosed_sim >= conserved_fb_active_undiagnosed_obs)/length(conserved_fb_active_undiagnosed_sim)
+
+# conserved quiescent diagnosed
+conserved_quiescent_diagnosed_obs = nrow(filter_with_bed(obs_diagnosed, conserved_fb_active))
+conserved_quiescent_diagnosed_sim = filter_with_bed(sim_diagnosed, conserved_fb_active)
+conserved_quiescent_diagnosed_sim = sapply(split(conserved_quiescent_diagnosed_sim, conserved_quiescent_diagnosed_sim$iteration), nrow)
+conserved_quiescent_diagnosed_95 = quantile(conserved_quiescent_diagnosed_sim, seq(0,1,0.025))[c(2,40)]
+conserved_quiescent_diagnosed_p = sum(conserved_quiescent_diagnosed_sim >= conserved_quiescent_diagnosed_obs)/length(conserved_quiescent_diagnosed_sim)
+
+# conserved fb_active diagnosed
+conserved_fb_active_diagnosed_obs = nrow(filter_with_bed(obs_diagnosed, conserved_fb_active))
+conserved_fb_active_diagnosed_sim = filter_with_bed(sim_diagnosed, conserved_fb_active)
+conserved_fb_active_diagnosed_sim = sapply(split(conserved_fb_active_diagnosed_sim, conserved_fb_active_diagnosed_sim$iteration), nrow)
+conserved_fb_active_diagnosed_95 = quantile(conserved_fb_active_diagnosed_sim, seq(0,1,0.025))[c(2,40)]
+conserved_fb_active_diagnosed_p = sum(conserved_fb_active_diagnosed_sim >= conserved_fb_active_diagnosed_obs)/length(conserved_fb_active_diagnosed_sim)
+
+chromHMM_all = data.frame(set = c("Conserved Undiagnosed\nFetal Brain Quiescent (chromHMM)", "Conserved Undiagnosed\nFetal Brain Active (chromHMM)", "Conserved Diagnosed\nFetal Brain Quiescent (chromHMM)", "Conserved Diagnosed\nFetal Brain Active (chromHMM)"), observed = c(conserved_quiescent_undiagnosed_obs, conserved_fb_active_undiagnosed_obs, conserved_quiescent_diagnosed_obs, conserved_fb_active_diagnosed_obs), expected = c(median(conserved_quiescent_undiagnosed_sim), median(conserved_fb_active_undiagnosed_sim), median(conserved_quiescent_diagnosed_sim), median(conserved_fb_active_diagnosed_sim)), low = c(conserved_quiescent_undiagnosed_95[1], conserved_fb_active_undiagnosed_95[1], conserved_quiescent_diagnosed_95[1], conserved_fb_active_diagnosed_95[1]), high = c(conserved_quiescent_undiagnosed_95[2], conserved_fb_active_undiagnosed_95[2], conserved_quiescent_diagnosed_95[2], conserved_fb_active_diagnosed_95[2]), p = c(conserved_quiescent_undiagnosed_p, conserved_fb_active_undiagnosed_p, conserved_quiescent_diagnosed_p, conserved_fb_active_diagnosed_p))
+
+chromHMM = data.frame(set = c("Conserved\nFetal Brain Quiescent (chromHMM)", "Conserved\nFetal Brain Active (chromHMM)"), observed = c(conserved_quiescent_undiagnosed_obs, conserved_fb_active_undiagnosed_obs), expected = c(median(conserved_quiescent_undiagnosed_sim), median(conserved_fb_active_undiagnosed_sim)), low = c(conserved_quiescent_undiagnosed_95[1], conserved_fb_active_undiagnosed_95[1]), high = c(conserved_quiescent_undiagnosed_95[2], conserved_fb_active_undiagnosed_95[2]), p = c(conserved_quiescent_undiagnosed_p, conserved_fb_active_undiagnosed_p))
+
+```
+
+```{r add neurodev phenotypes}
+
+neurodev_undiagnosed = has_neurodev$person_stable_id[has_neurodev$has_neurodev_phenotype & !has_neurodev$diagnosed]
+non_neurodev_undiagnosed = has_neurodev$person_stable_id[!has_neurodev$has_neurodev_phenotype & !has_neurodev$diagnosed]
+
+neurodev_undiagnosed_sim_ids = seq(1, length(neurodev_undiagnosed))
+non_neurodev_undiagnosed_sim_ids = seq(length(neurodev_undiagnosed)+1, length(neurodev_undiagnosed)+length(non_neurodev_undiagnosed)+1)
+
+
+# fb dhs undiagnosed + neurodev
+
+conserved_fb_dhs_undiagnosed_neurodev_obs = filter_with_bed(subset(obs_undiagnosed, person_stable_id %in% neurodev_undiagnosed), conserved)
+conserved_fb_dhs_undiagnosed_neurodev_obs = nrow(subset(conserved_fb_dhs_undiagnosed_neurodev_obs, (E081 > 0 | E082 > 0)))
+conserved_fb_dhs_undiagnosed_neurodev_sim = filter_with_bed(subset(sim, id_number %in% neurodev_undiagnosed_sim_ids), conserved)
+conserved_fb_dhs_undiagnosed_neurodev_sim = subset(conserved_fb_dhs_undiagnosed_neurodev_sim, (E081 > 0 | E082 > 0))
+conserved_fb_dhs_undiagnosed_neurodev_sim = sapply(split(conserved_fb_dhs_undiagnosed_neurodev_sim, conserved_fb_dhs_undiagnosed_neurodev_sim$iteration), function(i) nrow(i))
+conserved_fb_dhs_undiagnosed_neurodev_95 = quantile(conserved_fb_dhs_undiagnosed_neurodev_sim, seq(0,1,0.025))[c(2,40)]
+conserved_fb_dhs_undiagnosed_neurodev_p = sum(conserved_fb_dhs_undiagnosed_neurodev_sim >= conserved_fb_dhs_undiagnosed_neurodev_obs)/length(conserved_fb_dhs_undiagnosed_neurodev_sim)
+
+# fb dhs undiagnosed no neurodev
+
+conserved_fb_dhs_undiagnosed_non_neurodev_obs = filter_with_bed(subset(obs_undiagnosed, person_stable_id %in% non_neurodev_undiagnosed), conserved)
+conserved_fb_dhs_undiagnosed_non_neurodev_obs = nrow(subset(conserved_fb_dhs_undiagnosed_non_neurodev_obs, (E081 > 0 | E082 > 0)))
+conserved_fb_dhs_undiagnosed_non_neurodev_sim = filter_with_bed(subset(sim, id_number %in% non_neurodev_undiagnosed_sim_ids), conserved)
+conserved_fb_dhs_undiagnosed_non_neurodev_sim = subset(conserved_fb_dhs_undiagnosed_non_neurodev_sim, (E081 > 0 | E082 > 0))
+conserved_fb_dhs_undiagnosed_non_neurodev_sim = sapply(split(conserved_fb_dhs_undiagnosed_non_neurodev_sim, conserved_fb_dhs_undiagnosed_non_neurodev_sim$iteration), function(i) nrow(i))
+conserved_fb_dhs_undiagnosed_non_neurodev_95 = quantile(conserved_fb_dhs_undiagnosed_non_neurodev_sim, seq(0,1,0.025))[c(2,40)]
+conserved_fb_dhs_undiagnosed_non_neurodev_p = sum(conserved_fb_dhs_undiagnosed_non_neurodev_sim >= conserved_fb_dhs_undiagnosed_non_neurodev_obs)/length(conserved_fb_dhs_undiagnosed_non_neurodev_sim)
+
+
+# conserved fb_active undiagnosed + neurodev
+
+conserved_fb_active_undiagnosed_neurodev_obs = nrow(filter_with_bed(subset(obs_undiagnosed, person_stable_id %in% neurodev_undiagnosed), conserved_fb_active))
+conserved_fb_active_undiagnosed_neurodev_sim = subset(sim, id_number %in% neurodev_undiagnosed_sim_ids)
+conserved_fb_active_undiagnosed_neurodev_sim = filter_with_bed(conserved_fb_active_undiagnosed_neurodev_sim, conserved_fb_active)
+conserved_fb_active_undiagnosed_neurodev_sim = sapply(split(conserved_fb_active_undiagnosed_neurodev_sim, conserved_fb_active_undiagnosed_neurodev_sim$iteration), function(i) nrow(i))
+conserved_fb_active_undiagnosed_neurodev_95 = quantile(conserved_fb_active_undiagnosed_neurodev_sim, seq(0,1,0.025))[c(2,40)]
+conserved_fb_active_undiagnosed_neurodev_p = sum(conserved_fb_active_undiagnosed_neurodev_sim >= conserved_fb_active_undiagnosed_neurodev_obs)/length(conserved_fb_active_undiagnosed_neurodev_sim)
+
+# conserved fb_active undiagnosed no neurodev
+
+conserved_fb_active_undiagnosed_non_neurodev_obs = nrow(filter_with_bed(subset(obs_undiagnosed, person_stable_id %in% non_neurodev_undiagnosed), conserved_fb_active))
+conserved_fb_active_undiagnosed_non_neurodev_sim = subset(sim, id_number %in% non_neurodev_undiagnosed_sim_ids)
+conserved_fb_active_undiagnosed_non_neurodev_sim = filter_with_bed(conserved_fb_active_undiagnosed_non_neurodev_sim, conserved_fb_active)
+conserved_fb_active_undiagnosed_non_neurodev_sim = sapply(split(conserved_fb_active_undiagnosed_non_neurodev_sim, conserved_fb_active_undiagnosed_non_neurodev_sim$iteration), function(i) nrow(i))
+conserved_fb_active_undiagnosed_non_neurodev_95 = quantile(conserved_fb_active_undiagnosed_non_neurodev_sim, seq(0,1,0.025))[c(2,40)]
+conserved_fb_active_undiagnosed_non_neurodev_p = sum(conserved_fb_active_undiagnosed_non_neurodev_sim >= conserved_fb_active_undiagnosed_non_neurodev_obs)/length(conserved_fb_active_undiagnosed_non_neurodev_sim)
+
+brain_pheno = data.frame(set = c("Conserved Fetal Brain DNase\n+Neurodev Phenotype", "Conserved Fetal Brain DNase\n+No Neurodev Phenotype", "Fetal Brain Active Conserved Elements\n+Neurodev Phenotype", "Fetal Brain Active Conserved Elements\nNo Neurodev Phenotype"), observed = c(conserved_fb_dhs_undiagnosed_neurodev_obs, conserved_fb_dhs_undiagnosed_non_neurodev_obs, conserved_fb_active_undiagnosed_neurodev_obs, conserved_fb_active_undiagnosed_non_neurodev_obs), expected = c(median(conserved_fb_dhs_undiagnosed_neurodev_sim), median(conserved_fb_dhs_undiagnosed_non_neurodev_sim), median(conserved_fb_active_undiagnosed_neurodev_sim), median(conserved_fb_active_undiagnosed_non_neurodev_sim)), low = c(conserved_fb_dhs_undiagnosed_neurodev_95[1], conserved_fb_dhs_undiagnosed_non_neurodev_95[1], conserved_fb_active_undiagnosed_neurodev_95[1], conserved_fb_active_undiagnosed_non_neurodev_95[1]), high = c(conserved_fb_dhs_undiagnosed_neurodev_95[2], conserved_fb_dhs_undiagnosed_non_neurodev_95[2], conserved_fb_active_undiagnosed_neurodev_95[2], conserved_fb_active_undiagnosed_non_neurodev_95[2]), p = c(conserved_fb_dhs_undiagnosed_neurodev_p, conserved_fb_dhs_undiagnosed_non_neurodev_p, conserved_fb_active_undiagnosed_neurodev_p, conserved_fb_active_undiagnosed_non_neurodev_p))
+
+brain_pheno$set = factor(brain_pheno$set, levels = rev(c("Conserved Fetal Brain DNase\n+Neurodev Phenotype", "Conserved Fetal Brain DNase\n+No Neurodev Phenotype", "Fetal Brain Active Conserved Elements\n+Neurodev Phenotype", "Fetal Brain Active Conserved Elements\nNo Neurodev Phenotype")), ordered = TRUE)
+
+
+all = rbind(elements_undiagnosed[ , -7], dhs, chromHMM, brain_pheno)
+
+```
+
+
+```{r plot all undiagnosed}
+library(ggplot2)
+
+all$set = factor(all$set, levels = rev(c("Introns", "Heart Enhancers", "VISTA Enhancers", "Conserved", "Conserved\nNo Fetal Brain DNase", "Conserved\nFetal Brain DNase", "Conserved\nFetal Brain Quiescent (chromHMM)", "Conserved\nFetal Brain Active (chromHMM)", "Conserved Fetal Brain DNase\n+Neurodev Phenotype", "Conserved Fetal Brain DNase\n+No Neurodev Phenotype", "Fetal Brain Active Conserved Elements\n+Neurodev Phenotype", "Fetal Brain Active Conserved Elements\nNo Neurodev Phenotype")), ordered = TRUE)
+
+# normal scale
+ggplot(all, aes(set, expected)) + geom_pointrange(aes(ymin = low, ymax = high)) + scale_y_log10(breaks = c(20, 50,100, 200, 500, 1000)) + coord_flip() + geom_point(aes(set, observed), fill = "Red", size = 4, shape = 23, alpha = 0.6) + theme_bw(base_size = 18) + 
+    theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+    theme(legend.title = element_blank()) + xlab("") + ylab("De Novo Mutations (log scale)") + ggtitle("Non-Coding De Novos in Undiagnosed Probands")
+
+
+```
+
+We have observed a big enrichment in fetal brain DHSs. What is the relationship between DNM burden and distance from peak 'center' for elements with DHS overlaps?
+
+```{r DHS overlap in/out peak}
+
+# get all elements overlapping FB DHS
+# add fetal brain DHS peak
+fetal_brain_male = read.table(gzfile("../data/E081-DNase.hotspot.fdr0.01.broad.bed.gz"), header = FALSE, sep = "\t")
+colnames(fetal_brain_male) = c("chr", "start", "stop", "id", "intensity")
+
+fetal_brain_female = read.table(gzfile("../data/E082-DNase.hotspot.fdr0.01.broad.bed.gz"), header = FALSE, sep = "\t")
+colnames(fetal_brain_female) = c("chr", "start", "stop", "id", "intensity")
+
+conserved_grange = GRanges(seqnames=conserved$chr, IRanges(start = conserved$start, width = conserved$stop - conserved$start + 1))
+
+fbm = GRanges(seqnames = Rle(fetal_brain_male$chr), ranges = IRanges(start = fetal_brain_male$start, end = fetal_brain_male$stop))
+fbm_overlap = findOverlaps(fbm, conserved_grange)
+fbm_conserved_idx = subjectHits(fbm_overlap)
+
+fbf = GRanges(seqnames = Rle(fetal_brain_female$chr), ranges = IRanges(start = fetal_brain_female$start, end = fetal_brain_female$stop))
+fbf_overlap = findOverlaps(fbf, conserved_grange)
+fbf_conserved_idx = subjectHits(fbf_overlap)
+
+
+conserved_fb_dhs = conserved[unique(c(fbm_conserved_idx, fbf_conserved_idx)),]
+
+
+# get sim and obs in these elements
+o = filter_with_bed(obs_diagnosed, conserved_fb_dhs)
+s = filter_with_bed(sim_diagnosed, conserved_fb_dhs)
+
+
+# split burden into DNMs overlapping/not overlapping DHS
+o$dhs = (o$E081 > 0) | (o$E082 > 0)
+s$dhs = (s$E081 > 0) | (s$E082 > 0)
+
+# within peak
+layout(t(c(1,2)))
+sim_hist(sapply(split(s, s$iteration), function(df) sum(df$dhs)), sum(o$dhs), main = "Within Peak", xlab = "Number of DNMs", bin_width = 3)
+sim_hist(sapply(split(s, s$iteration), function(df) sum(!df$dhs)), sum(!o$dhs), main = "Outside of Peak", xlab = "Number of DNMs", bin_width = 3)
+
+
+```

@@ -1,0 +1,78 @@
+---
+title: "Figure S1 - MAPS for Genomiser and Fathmm-MKL"
+author: "Patrick Short"
+date: "19 January 2017"
+output: html_document
+---
+
+```{r load the data from unaffected parents}
+
+unaff_parent_variants_genomiser = read.table("../data/unaffected_parent_alleles_all_chromosomes.genomiser.txt", header = TRUE, sep = "\t")
+unaff_parent_variants_fathmm = read.table("../data/unaffected_parent_alleles_all_chromosomes.fathmm-mkl.noncoding.txt", header = TRUE, sep = "\t")
+
+
+```
+
+```{r MAPS within genomiser}
+source("../R/annotation_tools.R")
+source("../../dddMAPS/dddMAPS/MAPS.R")
+source("../../dddMAPS/dddMAPS/MAPS_plotting_extras.R")
+load("~/phd/code/dddMAPS/data/DDD_4k_parents_synonymous_maps_lm.RData")
+
+coding_elements = read.table("../data/gencode.v19.CDS.probe_overlap.min10_coverage.txt", header = TRUE, sep = "\t")
+
+coding_vars = filter_with_bed(unaff_parent_variants_genomiser, coding_elements)
+
+conserved_vars = filter_with_bed(unaff_parent_variants_genomiser, conserved)
+synonymous_vars = subset(coding_vars, vep_consequence == "synonymous_variant")
+
+maps_lm = maps_fit(synonymous_vars)
+
+conserved_vars$genomiser_bin = cut(conserved_vars$genomiser_ReMM, quantile(conserved_vars$genomiser_ReMM, seq(0,1,0.05)))
+
+n = maps_adjust(conserved_vars, conserved_vars$genomiser_bin, maps_lm)
+
+df = data.frame(genomiser_bin = levels(conserved_vars$genomiser_bin), maps = n$ps_adjusted, se = n$standard_error)
+
+limits = aes(ymin = df$maps - 1.96*df$se, ymax = df$maps + 1.96*df$se)
+
+ggplot(df, aes(genomiser_bin, maps)) +
+  geom_pointrange(limits, size = 1.25) + coord_flip() +
+  xlab("Genomiser ReMM Score\n") + ylab("\nMutability Adjusted Proportion of Singletons") +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank())
+
+
+```
+
+
+```{r MAPS for fathmm-mkl quantiles}
+coding_elements = read.table("../data/gencode.v19.CDS.probe_overlap.min10_coverage.txt", header = TRUE, sep = "\t")
+
+coding_vars = filter_with_bed(unaff_parent_variants_genomiser, coding_elements)
+
+conserved_vars = filter_with_bed(unaff_parent_variants_fathmm, conserved)
+synonymous_vars = subset(coding_vars, vep_consequence == "synonymous_variant")
+
+maps_lm = maps_fit(synonymous_vars)
+
+conserved_vars$fathmm_bin = cut(conserved_vars$fathmm_noncoding, quantile(conserved_vars$fathmm_noncoding, seq(0,1,0.05)))
+
+n = maps_adjust(conserved_vars, conserved_vars$fathmm_bin, maps_lm)
+
+df = data.frame(fathmm_bin = levels(conserved_vars$fathmm_bin), maps = n$ps_adjusted, se = n$standard_error)
+
+limits = aes(ymin = df$maps - 1.96*df$se, ymax = df$maps + 1.96*df$se)
+
+ggplot(df, aes(fathmm_bin, maps)) +
+  geom_pointrange(limits, size = 1.25) + coord_flip() +
+  xlab("Fathmm-MKL Score\n") + ylab("\nMutability Adjusted Proportion of Singletons") +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank())
+
+
+```

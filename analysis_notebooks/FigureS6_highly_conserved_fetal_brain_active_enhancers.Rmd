@@ -1,0 +1,144 @@
+---
+title: "Fetal Brain Active Enhancers"
+author: "Patrick Short"
+date: "17 November 2016"
+output: html_document
+---
+
+```{r testing fetal brain active enhancers}
+enhancers = read.table("../data/enhancer_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+
+# load the fetal brain BED file
+fetal_brain_male_15state = read.table("../data/E081_15_coreMarks_mnemonics.bed", header = FALSE, sep = "\t")
+colnames(fetal_brain_male_15state) = c("chr", "start", "stop", "chromHMM")
+fetal_brain_male_15state_quiescent = subset(fetal_brain_male_15state, chromHMM %in% c("9_Het", "13_ReprPC", "14_ReprPCWk", "15_Quies"))
+
+fetal_brain_female_15state = read.table("../data/E082_15_coreMarks_mnemonics.bed", header = FALSE, sep = "\t")
+colnames(fetal_brain_female_15state) = c("chr", "start", "stop", "chromHMM")
+fetal_brain_female_15state_quiescent = subset(fetal_brain_female_15state, chromHMM %in% c("9_Het", "13_ReprPC", "14_ReprPCWk", "15_Quies"))
+
+# separate the noncoding elements into quiescent/active based on chromHMM overlap
+ne = GRanges(seqnames = Rle(enhancers$chr), ranges = IRanges(start = enhancers$start, end = enhancers$stop))
+
+# fetal brain male and female quiescent states
+fbm = GRanges(seqnames = Rle(fetal_brain_male_15state_quiescent$chr), ranges = IRanges(start = fetal_brain_male_15state_quiescent$start, end = fetal_brain_male_15state_quiescent$stop))
+fbf = GRanges(seqnames = Rle(fetal_brain_female_15state_quiescent$chr), ranges = IRanges(start = fetal_brain_female_15state_quiescent$start, end = fetal_brain_female_15state_quiescent$stop))
+
+fully_quiescent_male = queryHits(findOverlaps(query = ne, subject = fbm, type = "within"))
+fully_quiescent_female = queryHits(findOverlaps(query = ne, subject = fbf, type = "within"))
+
+fully_quiescent = intersect(fully_quiescent_male, fully_quiescent_female)
+
+fetal_brain_active = enhancers[-fully_quiescent,]
+fetal_brain_quiescent = enhancers[fully_quiescent,]
+
+fetal_brain_active$region_id = paste0(fetal_brain_active$chr, ":", fetal_brain_active$start, "-", fetal_brain_active$stop)
+fetal_brain_quiescent$region_id = paste0(fetal_brain_quiescent$chr, ":", fetal_brain_quiescent$start, "-", fetal_brain_quiescent$stop)
+
+
+```
+
+
+```{r load DNMs}
+
+library(stringr)
+source("../R/annotation_tools.R")
+
+obs = read.table("../data/de_novos.ddd_8k.noncoding_included.2016-06-23.DHS_broad_peak_fdr_0.01.AllRoadmapTissues.txt", header = TRUE, sep = "\t")
+obs = subset(obs, pp_dnm > 0.00781)
+obs = subset(obs, nchar(as.character(ref)) == 1 & nchar(as.character(alt)) == 1)
+
+blacklist = read.table("../data/all_stable_id_blacklist", header = FALSE, sep = "\t")
+blacklist_kinship = read.table("../data/8K_kinship_blacklist.txt", header = FALSE, sep = "\t")
+blacklist = unique(c(as.character(blacklist$V1), as.character(blacklist_kinship$V1)))
+
+obs = subset(obs, !(person_stable_id %in% blacklist))
+
+diagnosed = read.table("../data/ddd_8k.diagnosed.2016-06-23.txt", header = TRUE, sep = "\t")
+diagnosed = subset(diagnosed, !(person_id %in% blacklist))
+diagnosed_sim_ids = seq(1, length(unique(diagnosed$person_id)))
+obs_diagnosed = subset(obs, person_stable_id %in% diagnosed$person_id)
+obs_undiagnosed = subset(obs, !(person_stable_id %in% diagnosed$person_id))
+
+# simulated data with DNase hypersensitivity annotations
+sim = read.table("../data/noncoding_sim.1k_runs.8k.8August2016.DHS_broad_peak_fdr_0.01.AllRoadmapTissues.txt", header = TRUE, sep = "\t")
+sim$id_number = as.numeric(str_split_fixed(sim$person_stable_id, "\\.", 4)[,2])
+sim = subset(sim, id_number <= (7952 - n_children_removed))
+
+sim_diagnosed = subset(sim, id_number %in% diagnosed_sim_ids)
+sim_undiagnosed = subset(sim, !(id_number %in% diagnosed_sim_ids))
+
+
+```
+
+Test observed vs simulated:
+
+
+```{r fetal brain active enhancers}
+source("../R/visualization.R")
+
+o_counts = nrow(filter_with_bed(obs_undiagnosed, fetal_brain_active))
+
+sim_fba = filter_with_bed(sim_undiagnosed, fetal_brain_active)
+s_counts = sapply(split(sim_fba, sim_fba$iteration), nrow)
+
+sim_hist(s_counts, o_counts, xlab = "Number of DNMs", main = "Fetal Brain Active Enhancers", bin_width = 2)
+
+```
+
+How about the most highly conserved?
+
+```{r conserved fetal brain active enhancers}
+library(phastCons100way.UCSC.hg19)
+
+fba_intervals = GRanges(seqnames=fetal_brain_active$chr, IRanges(start = fetal_brain_active$start, width = fetal_brain_active$stop - fetal_brain_active$start + 1))
+fetal_brain_active$phastcons100 = scores(phastCons100way.UCSC.hg19, fba_intervals)
+
+fba_conserved = subset(fetal_brain_active, phastcons100 > 0.75)
+
+o_counts = nrow(filter_with_bed(obs_undiagnosed, fba_conserved))
+
+sim_fba = filter_with_bed(sim_undiagnosed, fba_conserved)
+s_counts = sapply(split(sim_fba, sim_fba$iteration), nrow)
+
+hist(fetal_brain_active$phastcons100, xlab = "phastcons100", main = "Evolutionary Conservation of Fetal Brain Active Enhancers", col = "cyan")
+
+sim_hist(s_counts, o_counts, xlab = "Number of DNMs", main = "Conserved Fetal Brain Active Enhancers", bin_width = 2)
+
+```
+
+Recurrently mutated elements:
+
+
+```{r recurrently mutated}
+
+o = filter_with_bed(obs_undiagnosed, fetal_brain_active)
+s = filter_with_bed(sim_undiagnosed, fetal_brain_active)
+fetal_brain_active$region_id = paste0(fetal_brain_active$chr, ":", fetal_brain_active$start, "-", fetal_brain_active$stop)
+
+o$region_id = get_region_id(o, fetal_brain_active)
+s$region_id = get_region_id(s, fetal_brain_active)
+
+
+obs_recurrent_elements = names(table(o$region_id)[table(o$region_id) > 1])
+obs_recurrent_count = length(obs_recurrent_elements)
+
+sim_recurrent_count = sapply(split(s, s$iteration), function(df) length(table(df$region_id)[table(df$region_id) > 1]))
+
+sim_hist(sim_recurrent_count, obs_recurrent_count, xlab = "Number of Recurrently Mutated Elements", main = "Recurrently Mutated Fetal Brain Enhancers")
+
+
+o = filter_with_bed(o, fba_conserved)
+s = filter_with_bed(s, fba_conserved)
+
+obs_recurrent_elements = names(table(o$region_id)[table(o$region_id) > 1])
+obs_recurrent_count = length(obs_recurrent_elements)
+
+sim_recurrent_count = sapply(split(s, s$iteration), function(df) length(table(df$region_id)[table(df$region_id) > 1]))
+
+sim_hist(sim_recurrent_count, obs_recurrent_count, xlab = "Number of Recurrently Mutated Elements", main = "Recurrently Mutated Conserved Fetal Brain Enhancers")
+
+write.table(obs_recurrent_elements, "../data/recurrent_elements_conserved_fba_enhancers.txt", col.names = TRUE, sep = "\t", row.names = FALSE, quote = FALSE)
+
+
+```

@@ -1,0 +1,279 @@
+---
+title: "Figure 2 - Pop Gen in Non-Coding Elements"
+author: "Patrick Short"
+date: "7 December 2016"
+output: html_document
+---
+
+Code to generate Figure 2 of the non-coding burden paper.
+
+```{r load the unaff parental variants}
+source("~/phd/code/dddMAPS/dddMAPS/MAPS.R")
+source("~/phd/code/dddMAPS/dddMAPS/MAPS_plotting_extras.R")
+source("../R/annotation_tools.R")
+library(stringr)
+
+unaff_parent_variants = read.table("../data/unaffected_parent_alleles_all_chromosomes.FS_20.phylop.txt", header = TRUE, sep = "\t")
+
+#intervals = read.table("../data/de_novo_analysis_regions.8August2016.txt", header = TRUE, sep = "\t")
+#unaff_parent_variants$context = get_context(unaff_parent_variants$chr, unaff_parent_variants$pos, intervals)
+#unaff_parent_variants$alt_context = unaff_parent_variants$context
+#str_sub(unaff_parent_variants$alt_context, 2, 2) <- unaff_parent_variants$alt  # replace with alt
+#write.table(unaff_parent_variants, file = "../data/unaffected_parent_alleles_all_chromosomes.FS_20.phylop.txt", col.names = TRUE, sep = "\t", quote = FALSE, row.names = FALSE)
+
+unaff_parents_dhs = read.table("../data/unaffected_parent_alleles_all_chromosomes.CADD.DHS_broad_peak_fdr_0.01.chromHMM.AllRoadmapTissues.txt", header = TRUE, sep = "\t")
+
+unaff_parent_variants = merge(unaff_parent_variants, unaff_parents_dhs)
+
+```
+
+First, let's use the dddMAPS package to look for evidence of purifying selection across the three different element sets.
+
+```{r load the elements of interest}
+
+noncoding_control_elements = read.table("../data/noncoding_control_elements.10bp_buffer.min10_coverage.30bp_element_minimum.30x_probe_coverage_minimum.no_ddg2p_overlap.txt", header = TRUE, sep = "\t")
+coding_elements = read.table("../data/gencode.v19.CDS.probe_overlap.min10_coverage.txt", header = TRUE, sep = "\t")
+heart_elements = read.table("../data/heart_elements.10bp_buffer.min10_coverage.30bp_element_minimum.txt", header = TRUE, sep = "\t")
+conserved_elements = read.table("../data/conserved_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+enhancer_elements = read.table("../data/enhancer_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+
+ddg2p = as.character(read.table("../data/DDG2P_freeze_with_gencode19_genomic_coordinates_20141118_fixed.txt", header = TRUE, sep = "\t")$gencode_gene)
+ddg2p_coding_elements = subset(coding_elements, gene %in% ddg2p)
+
+variants_control_elements = filter_with_bed(unaff_parent_variants, noncoding_control_elements)
+variants_control_elements$annotation = "Control Introns"
+variants_heart_elements = filter_with_bed(unaff_parent_variants, heart_elements)
+variants_heart_elements$annotation = "Heart Enhancers"
+variants_enhancer_elements = filter_with_bed(unaff_parent_variants, enhancer_elements)
+variants_enhancer_elements$annotation = "VISTA Enhancers"
+variants_conserved_elements = filter_with_bed(unaff_parent_variants, conserved_elements)
+variants_conserved_elements$annotation = "Conserved"
+variants_synonymous = subset(unaff_parent_variants, vep_consequence == "synonymous_variant")
+variants_synonymous$annotation = "Synonymous"
+variants_coding_regions = filter_with_bed(unaff_parent_variants, coding_elements)
+variants_coding_regions$annotation = "All Coding"
+variants_ddg2p_genes = filter_with_bed(unaff_parent_variants, ddg2p_coding_elements)
+variants_ddg2p_genes$annotation = "DDG2P Genes"
+
+variants = rbind(variants_control_elements, variants_heart_elements, variants_enhancer_elements, variants_conserved_elements, variants_synonymous, variants_coding_regions, variants_ddg2p_genes)
+
+```
+
+```{r MAPS for different element sets}
+source("~/phd/code/dddMAPS/dddMAPS/MAPS.R")
+
+# take only synonymous variants
+coding_vars = filter_with_bed(unaff_parent_variants, coding_elements)
+synonymous_parental_vars = subset(coding_vars, vep_consequence == "synonymous_variant")
+
+# fit linear model to synonymous variants
+maps_lm = maps_fit(synonymous_parental_vars)
+
+unaff_maps = maps_adjust(variants, variants$annotation, maps_lm)
+unaff_maps$standard_error = unaff_maps$standard_error[match(rev(c("DDG2P Genes", "All Coding", "Synonymous", "Conserved", "VISTA Enhancers", "Heart Enhancers", "Control Introns")), names(unaff_maps$ps_adjusted))]
+unaff_maps$ps_adjusted = unaff_maps$ps_adjusted[match(rev(c("DDG2P Genes", "All Coding", "Synonymous", "Conserved", "VISTA Enhancers", "Heart Enhancers", "Control Introns")), names(unaff_maps$ps_adjusted))]
+
+unaff_coding_maps = maps_adjust(coding_vars, coding_vars$vep_consequence, maps_lm)
+
+```
+
+We can see that the enhancer elements and conserved elements show evidence of purifying selection while the intronic elements do not:
+
+```{r plot MAPS}
+
+maps_ggplot(names(unaff_maps$ps_adjusted), unaff_maps$ps_adjusted, unaff_maps$standard_error, add_coding = FALSE , already_ordered = TRUE, score_name = "")
+
+```
+
+```{r constraint across elements}
+library(phastCons100way.UCSC.hg19)
+
+conserved = read.table("../data/conserved_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+enhancer = read.table("../data/enhancer_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+heart = read.table("../data/heart_elements.10bp_buffer.min10_coverage.30bp_element_minimum.txt", header = TRUE, sep = "\t")
+
+conserved_intervals = GRanges(seqnames=conserved$chr, IRanges(start = conserved$start, width = conserved$stop - conserved$start + 1))
+enhancer_intervals = GRanges(seqnames=enhancer$chr, IRanges(start = enhancer$start, width = enhancer$stop - enhancer$start + 1))
+heart_intervals = GRanges(seqnames=heart$chr, IRanges(start = heart$start, width = heart$stop - heart$start + 1))
+
+conserved_phastcons100 = scores(phastCons100way.UCSC.hg19, conserved_intervals)
+enhancer_phastcons100 = scores(phastCons100way.UCSC.hg19, enhancer_intervals)
+heart_phastcons100 = scores(phastCons100way.UCSC.hg19, heart_intervals)
+
+phastcons = data.frame(phastcons100 = c(conserved_phastcons100, enhancer_phastcons100, heart_phastcons100), set = c(rep("Conserved Elements", length(conserved_phastcons100)), rep("VISTA Enhancers", length(enhancer_phastcons100)), rep("Heart Enhancers", length(heart_phastcons100))))
+
+phastcons$set = factor(phastcons$set, levels = c("Heart Enhancers", "VISTA Enhancers", "Conserved Elements"))
+
+ggplot(phastcons, aes(set, phastcons100, fill = set)) + geom_violin() +
+  theme_bw(base_size = 18) + 
+  theme(axis.title.x = element_blank(), strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), plot.title = element_text(hjust = 0.5)) +
+  theme(legend.title = element_blank()) + ggtitle("Enhancer Elements are Not Highly Conserved")
+
+```
+
+```{r MAPS within CADD quantiles}
+source("../R/annotation_tools.R")
+source("../../dddMAPS/dddMAPS/MAPS.R")
+source("../../dddMAPS/dddMAPS/MAPS_plotting_extras.R")
+load("~/phd/code/dddMAPS/data/DDD_4k_parents_synonymous_maps_lm.RData")
+
+coding_elements = read.table("../data/gencode.v19.CDS.probe_overlap.min10_coverage.txt", header = TRUE, sep = "\t")
+
+coding_vars = filter_with_bed(unaff_parent_variants, coding_elements)
+
+conserved_vars = filter_with_bed(unaff_parent_variants, conserved)
+synonymous_vars = subset(coding_vars, vep_consequence == "synonymous_variant")
+
+maps_lm = maps_fit(synonymous_vars)
+
+coding_vars$cadd_bin = cut(coding_vars$scaled_CADD, c(seq(0,30,2), 40, 50))
+conserved_vars$cadd_bin = cut(conserved_vars$scaled_CADD, c(seq(0,30,2), 40, 50))
+
+c = maps_adjust(coding_vars, coding_vars$cadd_bin, maps_lm)
+n = maps_adjust(conserved_vars, conserved_vars$cadd_bin, maps_lm)
+
+vep = maps_adjust(coding_vars, coding_vars$vep_consequence, maps_lm)
+
+v = data.frame(cadd_bin = c("Synonymous", "Missense", "Stop Gained"), maps = c(vep$ps_adjusted["synonymous_variant"], vep$ps_adjusted["missense_variant"], vep$ps_adjusted["stop_gained"]), se = c(vep$standard_error["synonymous_variant"], vep$standard_error["missense_variant"], vep$standard_error["stop_gained"]), set = "VEP Annotation")
+df = data.frame(cadd_bin = rep(levels(coding_vars$cadd_bin), 2), maps = c(c$ps_adjusted, n$ps_adjusted), se = c(c$standard_error, n$standard_error), set = c(rep("Coding", length(c$ps_adjusted)), rep("Conserved Non-Coding", length(n$ps_adjusted))))
+
+df = rbind(v, df)
+
+df$cadd_bin = factor(df$cadd_bin, levels = c(levels(coding_vars$cadd_bin), c("Synonymous", "Missense", "Stop Gained")), ordered = TRUE)
+
+limits = aes(ymin = df$maps - 1.96*df$se, ymax = df$maps + 1.96*df$se)
+
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+ggplot(df, aes(cadd_bin, maps, color = set)) +
+  geom_pointrange(limits, size = 1.25) + coord_flip() +
+  xlab("CADD Score\n") + ylab("\nMutability Adjusted Proportion of Singletons") +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank()) + scale_color_manual(values = cbbPalette)
+
+
+```
+
+```{r define the tissue sets}
+
+ESC = c("E002", "E008", "E001", "E015", "E014", "E016", "E003", "E024")
+iPSC = c("E020", "E019", "E018", "E021", "E022")
+ES_derived_tissues = c("E007", "E009", "E010", "E013", "E012", "E011", "E004", "E005", "E006")
+blood = c("E062", "E034", "E045", "E033", "E044", "E043", "E039", "E041", "E042", "E040", "E037", "E048", "E038", "E047")
+hsc_and_b_cell = c("E029", "E031", "E035", "E051", "E050", "E036", "E032", "E046", "E030")
+mesench = c("E026", "E049", "E025", "E023")
+myostat = c("E052")
+epithelial = c("E055","E056","E059","E061","E057","E058","E028","E027")
+neurosphere = c("E054", "E053")
+thymus = c("E112", "E093")
+adult_brain = c("E071", "E074", "E068", "E069", "E072", "E067", "E073", "E070")
+adipose = c("E063")
+adult_muscle = c("E100", "E108","E107")
+adult_heart = c("E104", "E095", "E105", "E065")
+smooth_muscle = c("E078", "E076", "E103", "E111")
+adult_digestive = c("E109", "E106", "E075", "E101", "E102", "E110", "E077", "E079", "E094")
+
+fetal = c("E080", "E081", "E082", "E083", "E084", "E085", "E086", "E088", "E089", "E090", "E092", "E093", "E017") # E091, placenta not tested because it is not strictly fetal
+fetal_brain = c("E082", "E081")
+ES_derived_neuronal = c("E007", "E009", "E010")
+
+developmental = c(fetal, ES_derived_neuronal, ESC)
+
+```
+
+
+```{r MAPS for all tissue sets, echo = FALSE}
+source("~/phd/code/dddMAPS/dddMAPS/MAPS_plotting_extras.R")
+
+# conserved elements 
+unaffected_parents_conserved = filter_with_bed(unaff_parent_variants, conserved)
+
+overlap_matrix = unaffected_parents_conserved[,grepl("E[0-1][0-9][0-9]$", colnames(unaffected_parents_conserved))]
+n = unaffected_parents_conserved[,1:6]
+
+non_fetal_brain = colnames(overlap_matrix)[!(colnames(overlap_matrix) %in% fetal_brain)]
+non_fetal_tissue = colnames(overlap_matrix)[!(colnames(overlap_matrix) %in% fetal)]
+
+n$overlaps_peak = rowSums(overlap_matrix) > 0
+n$no_peak = rowSums(overlap_matrix) == 0
+
+#n$adult_brain = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% adult_brain]) > 0 # no DHS data
+
+n$fetal_brain = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% fetal_brain]) > 0
+n$non_fetal_brain = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% fetal_brain]) == 0 & rowSums(overlap_matrix[,colnames(overlap_matrix) %in% non_fetal_brain]) > 0
+
+n$fetal_tissues = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% fetal]) > 0
+#n$non_fetal_tissues = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% fetal]) == 0 & rowSums(overlap_matrix[,colnames(overlap_matrix) %in% non_fetal_tissue]) > 0
+
+#n$adult_heart = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% adult_heart]) > 0 # no DHS data
+
+n$adult_muscle = overlap_matrix[,colnames(overlap_matrix) %in% adult_muscle] > 0
+n$adult_digestive = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% adult_digestive]) > 0
+
+#n$smooth_muscle = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% smooth_muscle]) > 0 # no DHS data
+
+n$blood_and_t_cell = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% blood]) > 0
+n$hsc_and_b_cell = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% hsc_and_b_cell]) > 0
+
+#n$mesenc = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% mesench]) > 0 # no DHS data
+
+n$epithelial = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% epithelial]) > 0
+
+#n$neurosphere = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% neurosphere]) > 0 # no DHS data
+
+n$thymus = overlap_matrix[,colnames(overlap_matrix) %in% thymus] > 0
+
+#n$adipose = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% adipose]) > 0 # no DHS data
+
+n$es_derived_neuronal = overlap_matrix[,colnames(overlap_matrix) %in% ES_derived_neuronal] > 0
+n$ipsc = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% iPSC]) > 0
+n$ESC = rowSums(overlap_matrix[,colnames(overlap_matrix) %in% ESC]) > 0
+
+
+labels = c("any peak overlap", "no peak overlap", "fetal brain", "fetal tissue", "adult muscle", "adult digestive", "blood and t-cell", "HSC and b-cell", "epithelial", "thymus", "ES-derived neuronal", "iPSC", "ESC")
+tissue_factor = list(n$overlaps_peak, n$no_peak, n$fetal_brain, n$fetal_tissues, n$adult_muscle, n$adult_digestive, n$blood_and_t_cell, n$hsc_and_b_cell, n$epithelial, n$thymus, n$es_derived_neuronal, n$ipsc, n$ESC)
+
+all = vector("list", length(labels))
+
+labels = labels[unlist(sapply(tissue_factor, sum)) > 4000]
+tissue_factor = tissue_factor[unlist(sapply(tissue_factor, sum)) > 4000]
+
+# make a big data frame and repeat any variants that are overlapping multiple different tissues
+for (i in seq(1, length(labels))){
+  
+  vars = n[tissue_factor[[i]], c("chr", "pos", "ref", "alt", "allele_count")]
+  vars$tissue_overlap = labels[i]
+  all[[i]] = vars
+
+}
+
+tissue_uber_vars = do.call(rbind, all)
+
+uber = maps_adjust(tissue_uber_vars, tissue_uber_vars$tissue_overlap, maps_lm)
+
+uber$standard_error = uber$standard_error[order(uber$ps_adjusted)]
+uber$ps_adjusted = uber$ps_adjusted[order(uber$ps_adjusted)]
+tissue_uber_vars$tissue_overlap = factor(tissue_uber_vars$tissue_overlap, levels = names(uber$ps_adjusted), ordered = TRUE)
+
+maps_plus_bar(names(uber$ps_adjusted), uber$ps_adjusted, uber$standard_error,tissue_uber_vars, tissue_uber_vars$tissue_overlap, score_name = "Conserved Element DHS Annotation", add_coding_fixed = FALSE )
+
+```
+
+
+```{r bootstrap p-value for in/out of peak}
+
+compare_ps <- function(vars) {
+  r = ps_raw(vars, vars$tissue_overlap)
+  any_peak_greater = r$ps_raw['any peak overlap'] > r$ps_raw['no peak overlap']
+  return(any_peak_greater)
+}
+
+# sample random subset from no peak and any peak
+i = subset(tissue_uber_vars, tissue_overlap %in% c("any peak overlap", "no peak overlap"))
+
+# calculate maps and compare which one is greater
+results = sapply(seq(1,1000), function(df) compare_ps(i[sample(seq(1, nrow(i)), nrow(i), replace = TRUE),]))
+
+```

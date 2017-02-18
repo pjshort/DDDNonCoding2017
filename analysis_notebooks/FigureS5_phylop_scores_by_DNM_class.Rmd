@@ -1,0 +1,106 @@
+---
+title: "Figure S5 - PhyloP scores per DNM"
+author: "Patrick Short"
+date: "19 January 2017"
+output: html_document
+---
+
+---
+title: "Conservation of De Novos"
+author: "Patrick Short"
+date: "22 June 2016"
+output: html_document
+---
+
+How does the level of conservation at de novo sites in cases compare between diagnosed and undiagnosed. To do: add simulations!
+
+PhyloP is a per base log odds score based on sequence conservation across 100 vertebrate species.
+
+```{bash phylop scoring}
+bsub -q normal -J "phylop_DNMs" -R'select[mem>50] rusage[mem=50]' -M50 \
+-o /lustre/scratch113/projects/ddd/users/ps14/PhyloP/observed_dnms.out \
+python ~/software/SingletonMetric/python/TabixScores.py \
+--tabix /lustre/scratch113/projects/ddd/users/ps14/PhyloP/hg19.100way.phyloP100way.bedGraph.gz \
+--variants ~/reference_data/de_novos.ddd_8k.noncoding_included.2016-06-23.txt \
+--variants_out /lustre/scratch113/projects/ddd/users/ps14/PhyloP/de_novos.ddd_8k.noncoding_included.2016-06-23.PhyloP.txt \
+--score PhyloP
+
+```
+
+Distribution of phyloP scores by variant class:
+
+```{r phylop by variant class}
+library(ggplot2)
+source("../R/annotation_tools.R")
+
+diagnosed = read.table("../data/ddd_8k.diagnosed.2016-06-23.txt", header = TRUE, sep = "\t")
+ddg2p = read.table("../data/DDG2P_freeze_with_gencode19_genomic_coordinates_20141118_fixed.txt", header = TRUE, sep = "\t")
+ddg2p_mono_lof = subset(ddg2p, Allelic_requirement %in% c("Monoallelic") & Mutation_Consequence == "Loss of function")
+
+conserved_fb_active = read.table("../data/conserved_elements.min10_coverage.fb_active_roadmap_union.txt", header = TRUE, sep = "\t")
+conserved_fb_inactive = read.table("../data/conserved_elements.min10_coverage.fb_quiescent_roadmap_union.txt", header = TRUE, sep = "\t")
+conserved_and_enhancer_fb_active = read.table("../data/conserved_and_enhancer.min10_coverage.fb_active_roadmap_union.txt", header = TRUE, sep = "\t")
+enhancers = read.table("../data/enhancer_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+enhancers$region_id = paste0(enhancers$chr, ":", enhancers$start, "-", enhancers$stop)
+enhancers = subset(enhancers, !(region_id %in% conserved_and_enhancer_fb_active$region_id))
+
+heart_elements = read.table("../data/heart_elements.10bp_buffer.min10_coverage.30bp_element_minimum.txt", header = TRUE, sep = "\t")
+control_introns = read.table("../data/noncoding_control_elements.10bp_buffer.min10_coverage.30bp_element_minimum.txt", header = TRUE, sep = "\t")
+
+obs = read.table("../data/de_novos.ddd_8k.noncoding_included.2016-06-23.PhyloP.txt", header = TRUE, sep = "\t")
+obs = subset(obs, nchar(as.character(ref)) == 1 & nchar(as.character(alt)) == 1)
+obs = subset(obs, pp_dnm > 0.00781)
+
+blacklist = read.table("../data/8K_DF_Blacklist.txt", header = FALSE, sep = "\t")
+obs = subset(obs, !(person_stable_id %in% blacklist$V1))
+
+diagnosed = read.table("../data/ddd_8k.diagnosed.2016-06-23.txt", header = TRUE, sep = "\t")
+diagnosed = subset(diagnosed, !(person_id %in% blacklist$V1))
+diagnosed_sim_ids = seq(1, length(unique(diagnosed$person_id)))
+
+obs$diagnosed = obs$person_stable_id %in% diagnosed$person_id
+
+obs_conserved_fb_active = filter_with_bed(obs, conserved_fb_active)
+obs_conserved_fb_active$variant_class = "Conserved Non-Coding - Fetal Brain Active"
+
+obs_conserved_and_enhancer_fb_active = filter_with_bed(obs, conserved_and_enhancer_fb_active)
+obs_conserved_and_enhancer_fb_active$variant_class = "CNE+Conserved Enhancers - Fetal Brain Active"
+
+obs_conserved_fb_inactive = filter_with_bed(obs, conserved_fb_inactive)
+obs_conserved_fb_inactive$variant_class = "Conserved Non-Coding - Fetal Brain Inactive"
+
+obs_enhancer = filter_with_bed(obs, enhancers)
+obs_enhancer$variant_class = "VISTA Enhancer"
+obs_heart = filter_with_bed(obs, heart_elements)
+obs_heart$variant_class = "Heart Enhancer"
+obs_intron = filter_with_bed(obs, control_introns)
+obs_intron$variant_class = "Control Intron"
+obs_syn = subset(obs, consequence == "synonymous_variant")
+obs_syn$chr = paste0("chr", obs_syn$chrom)
+obs_syn$variant_class = "Synonymous"
+obs_mis = subset(obs, consequence == "missense_variant" & !(symbol %in% ddg2p$ddg2p_gene_name))
+obs_mis$chr = paste0("chr", obs_mis$chrom)
+obs_mis$variant_class = "Missense"
+obs_sg = subset(obs, consequence == "stop_gained")
+obs_sg$chr = paste0("chr", obs_sg$chrom)
+obs_sg$variant_class = "Stop Gained"
+obs_diagnostic = subset(obs, consequence %in% c("stop_gained", "missense_variant", "splice_donor_variant", "splice_acceptor_variant") & symbol %in% ddg2p$ddg2p_gene_name)
+obs_diagnostic$chr = paste0("chr", obs_diagnostic$chrom)
+obs_diagnostic$variant_class = "DDG2P Gene"
+obs_diagnostic$diagnosed = TRUE
+
+
+obs_for_phylop = rbind(obs_conserved_and_enhancer_fb_active, obs_conserved_fb_active, obs_conserved_fb_inactive, obs_enhancer, obs_heart, obs_intron, obs_syn, obs_mis, obs_sg, obs_diagnostic)
+
+ggplot(obs_for_phylop, aes(variant_class, phylop, fill = diagnosed)) + geom_boxplot(position = position_dodge(width = 0.4), width = 0.4) + theme_bw(base_size = 18) + coord_flip() +
+    theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+    theme(legend.title = element_blank()) + scale_fill_manual(breaks = c(FALSE, TRUE), labels = c("Undiagnosed", "Diagnosed"), values = c("red", "cyan")) + xlab("") + ylab("PhyloP Score (log odds ratio of site being conserved)")
+
+wilcox.test(obs_mis$phylop[obs_mis$diagnosed], obs_mis$phylop[!obs_mis$diagnosed]) 
+wilcox.test(obs_enhancer$phylop[obs_enhancer$diagnosed], obs_enhancer$phylop[!obs_enhancer$diagnosed])
+wilcox.test(obs_conserved_fb_active$phylop[obs_conserved_fb_active$diagnosed], obs_conserved_fb_active$phylop[!obs_conserved_fb_active$diagnosed]) 
+wilcox.test(obs_conserved_and_enhancer_fb_active$phylop[obs_conserved_and_enhancer_fb_active$diagnosed], obs_conserved_and_enhancer_fb_active$phylop[!obs_conserved_and_enhancer_fb_active$diagnosed]) 
+
+```
+

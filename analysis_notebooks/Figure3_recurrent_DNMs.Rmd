@@ -1,0 +1,308 @@
+---
+title: "Figure 4 - Recurrent DNMs"
+author: "Patrick Short"
+date: "7 December 2016"
+output: html_document
+---
+
+Code to generate Figure 2 of the non-coding burden paper.
+
+```{r load data}
+library(stringr)
+source("../R/annotation_tools.R")
+
+conserved = read.table("../data/conserved_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+enhancers = read.table("../data/enhancer_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+heart = read.table("../data/heart_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+control_elements = read.table("../data/noncoding_control_elements.10bp_buffer.min10_coverage.30bp_element_minimum.30x_probe_coverage_minimum.no_ddg2p_overlap.txt", header = TRUE, sep = "\t")
+
+obs = read.table("../data/de_novos.ddd_8k.noncoding_included.2016-06-23.DHS_broad_peak_fdr_0.01.AllRoadmapTissues.txt", header = TRUE, sep = "\t")
+obs = subset(obs, pp_dnm > 0.00781)
+obs = subset(obs, nchar(as.character(ref)) == 1 & nchar(as.character(alt)) == 1)
+
+blacklist = read.table("../data/all_stable_id_blacklist", header = FALSE, sep = "\t")
+blacklist_kinship = read.table("../data/8K_kinship_blacklist.txt", header = FALSE, sep = "\t")
+blacklist = unique(c(as.character(blacklist$V1), as.character(blacklist_kinship$V1)))
+
+obs = subset(obs, !(person_stable_id %in% blacklist))
+
+diagnosed = read.table("../data/ddd_8k.diagnosed.2016-06-23.txt", header = TRUE, sep = "\t")
+diagnosed = subset(diagnosed, !(person_id %in% blacklist))
+diagnosed_sim_ids = seq(1, length(unique(diagnosed$person_id)))
+obs_diagnosed = subset(obs, person_stable_id %in% diagnosed$person_id)
+obs_undiagnosed = subset(obs, !(person_stable_id %in% diagnosed$person_id))
+
+# load the file indicating whether proband has neurodev disorder (also used to get number of probands on blacklist)
+has_neurodev = read.table("../data/ddd_8k_probands.neurodev_terms.txt", header = TRUE, sep = "\t")
+has_neurodev$has_neurodev_phenotype = ifelse(has_neurodev$has_neurodev_phenotype == "True", TRUE, FALSE)
+n_children_removed = sum(has_neurodev$person_stable_id %in% blacklist)
+has_neurodev = subset(has_neurodev, !(person_stable_id %in% blacklist))
+has_neurodev$diagnosed = has_neurodev$person_stable_id %in% diagnosed$person_id
+
+undiagnosed_neurodev = has_neurodev$person_stable_id[has_neurodev$has_neurodev_phenotype & !has_neurodev$diagnosed]
+
+# simulated data with DNase hypersensitivity annotations
+sim = read.table("../data/noncoding_sim.1k_runs.8k.8August2016.DHS_broad_peak_fdr_0.01.AllRoadmapTissues.txt", header = TRUE, sep = "\t")
+sim$id_number = as.numeric(str_split_fixed(sim$person_stable_id, "\\.", 4)[,2])
+sim = subset(sim, id_number <= (7952 - n_children_removed))
+
+sim_diagnosed = subset(sim, id_number %in% diagnosed_sim_ids)
+sim_undiagnosed = subset(sim, !(id_number %in% diagnosed_sim_ids))
+
+
+# look at neurodev only
+obs_undiagnosed_neurodev = subset(obs, person_stable_id %in% undiagnosed_neurodev)
+undiagnosed_neurodev_sim_ids = seq(1, length(unique(undiagnosed_neurodev)))
+sim_undiagnosed_neurodev = subset(sim, id_number %in% undiagnosed_neurodev_sim_ids)
+
+```
+
+
+```{r get conserved fb active and conserved fb enhancers}
+
+conserved_fb_active = read.table("../data/conserved_elements.min10_coverage.fb_active_roadmap_union.txt", header = TRUE, sep = "\t")
+enhancers = read.table("../data/enhancer_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+
+# load the fetal brain BED file
+fetal_brain_male_15state = read.table("../data/E081_15_coreMarks_mnemonics.bed", header = FALSE, sep = "\t")
+colnames(fetal_brain_male_15state) = c("chr", "start", "stop", "chromHMM")
+fetal_brain_male_15state_quiescent = subset(fetal_brain_male_15state, chromHMM %in% c("9_Het", "13_ReprPC", "14_ReprPCWk", "15_Quies"))
+
+fetal_brain_female_15state = read.table("../data/E082_15_coreMarks_mnemonics.bed", header = FALSE, sep = "\t")
+colnames(fetal_brain_female_15state) = c("chr", "start", "stop", "chromHMM")
+fetal_brain_female_15state_quiescent = subset(fetal_brain_female_15state, chromHMM %in% c("9_Het", "13_ReprPC", "14_ReprPCWk", "15_Quies"))
+
+# separate the noncoding elements into quiescent/active based on chromHMM overlap
+ne = GRanges(seqnames = Rle(enhancers$chr), ranges = IRanges(start = enhancers$start, end = enhancers$stop))
+
+# fetal brain male and female quiescent states
+fbm = GRanges(seqnames = Rle(fetal_brain_male_15state_quiescent$chr), ranges = IRanges(start = fetal_brain_male_15state_quiescent$start, end = fetal_brain_male_15state_quiescent$stop))
+fbf = GRanges(seqnames = Rle(fetal_brain_female_15state_quiescent$chr), ranges = IRanges(start = fetal_brain_female_15state_quiescent$start, end = fetal_brain_female_15state_quiescent$stop))
+
+fully_quiescent_male = queryHits(findOverlaps(query = ne, subject = fbm, type = "within"))
+fully_quiescent_female = queryHits(findOverlaps(query = ne, subject = fbf, type = "within"))
+
+fully_quiescent = intersect(fully_quiescent_male, fully_quiescent_female)
+
+enhancer_fb_active = enhancers[-fully_quiescent,]
+
+enhancer_fb_active$region_id = paste0(enhancer_fb_active$chr, ":", enhancer_fb_active$start, "-", enhancer_fb_active$stop)
+
+
+library(phastCons100way.UCSC.hg19)
+
+fba_intervals = GRanges(seqnames=enhancer_fb_active$chr, IRanges(start = enhancer_fb_active$start, width = enhancer_fb_active$stop - enhancer_fb_active$start + 1))
+enhancer_fb_active$phastcons100 = scores(phastCons100way.UCSC.hg19, fba_intervals)
+enhancer_fb_active_conserved = subset(enhancer_fb_active, phastcons100 > 0.75)
+
+```
+
+Recurrently mutated elements:
+
+```{r recurrently mutated}
+source("../R/visualization.R")
+
+fb_active = rbind(conserved_fb_active, enhancer_fb_active_conserved[,-8])
+#fb_active = enhancer_fb_active_conserved
+#fb_active = conserved_fb_active
+
+o = filter_with_bed(obs_undiagnosed, fb_active)
+s = filter_with_bed(sim_undiagnosed, fb_active)
+fb_active$region_id = paste0(fb_active$chr, ":", fb_active$start, "-", fb_active$stop)
+
+o$region_id = get_region_id(o, fb_active)
+s$region_id = get_region_id(s, fb_active)
+
+
+obs_recurrent_elements = names(table(o$region_id)[table(o$region_id) > 1])
+obs_recurrent_count = length(obs_recurrent_elements)
+
+sim_recurrent_count = sapply(split(s, s$iteration), function(df) length(table(df$region_id)[table(df$region_id) > 1]))
+
+sim_hist(sim_recurrent_count, obs_recurrent_count, xlab = "Number of Recurrently Mutated Elements", main = "Fetal Brain Active CNEs\nand Conserved Enhancers")
+
+# calculate the p-value directly
+p_recurrent = ppois(2 - 1, fb_active$p_snp_null*length(unique(sim_undiagnosed$id_number)), lower.tail = FALSE)
+sim_direct = replicate(1e6, sum(runif(length(p_recurrent)) < p_recurrent))
+
+p_analytical = sum(sim_direct >= obs_recurrent_count)/1e6
+
+```
+
+
+```{r manhattan plot}
+# this code thanks to alejandro sifrim!
+
+library(ggplot2)
+library(qqman)
+library(gridExtra)
+library(calibrate)
+require(gridExtra)
+
+manhattan <- function (x, chr = "CHR", bp = "BP", p = "P", snp = "SNP", col = c("gray10", 
+                                                                                "gray60"), chrlabs = NULL, suggestiveline = -log10(1e-05), 
+                       genomewideline = -log10(5e-08), highlight = NULL, logp = TRUE, 
+                       annotatePval = NULL, annotateTop = TRUE, ...) 
+{
+  CHR = BP = P = index = NULL
+  if (!(chr %in% names(x))) 
+    stop(paste("Column", chr, "not found!"))
+  if (!(bp %in% names(x))) 
+    stop(paste("Column", bp, "not found!"))
+  if (!(p %in% names(x))) 
+    stop(paste("Column", p, "not found!"))
+  if (!(snp %in% names(x))) 
+    warning(paste("No SNP column found. OK unless you're trying to highlight."))
+  if (!is.numeric(x[[chr]])) 
+    stop(paste(chr, "column should be numeric. Do you have 'X', 'Y', 'MT', etc? If so change to numbers and try again."))
+  if (!is.numeric(x[[bp]])) 
+    stop(paste(bp, "column should be numeric."))
+  if (!is.numeric(x[[p]])) 
+    stop(paste(p, "column should be numeric."))
+  d = data.frame(CHR = x[[chr]], BP = x[[bp]], P = x[[p]])
+  if (!is.null(x[[snp]])) 
+    d = transform(d, SNP = x[[snp]])
+  d <- subset(d, (is.numeric(CHR) & is.numeric(BP) & is.numeric(P)))
+  d <- d[order(d$CHR, d$BP), ]
+  if (logp) {
+    d$logp <- -log10(d$P)
+  }
+  else {
+    d$logp <- d$P
+  }
+  d$pos = NA
+  d$index = NA
+  ind = 0
+  for (i in unique(d$CHR)) {
+    ind = ind + 1
+    d[d$CHR == i, ]$index = ind
+  }
+  nchr = length(unique(d$CHR))
+  if (nchr == 1) {
+    d$pos = d$BP
+    ticks = floor(length(d$pos))/2 + 1
+    xlabel = paste("Chromosome", unique(d$CHR), "position")
+    labs = ticks
+  }
+  else {
+    lastbase = 0
+    ticks = NULL
+    for (i in unique(d$index)) {
+      if (i == 1) {
+        d[d$index == i, ]$pos = d[d$index == i, ]$BP
+      }
+      else {
+        lastbase = lastbase + tail(subset(d, index == 
+                                            i - 1)$BP, 1)
+        d[d$index == i, ]$pos = d[d$index == i, ]$BP + 
+          lastbase
+      }
+      ticks = c(ticks, (min(d[d$index == i, ]$pos) + max(d[d$index == 
+                                                             i, ]$pos))/2 + 1)
+    }
+    xlabel = "Chromosome"
+    labs <- unique(d$CHR)
+  }
+  xmax = ceiling(max(d$pos) * 1.03)
+  xmin = floor(max(d$pos) * -0.03)
+  def_args <- list(xaxt = "n", bty = "n", xaxs = "i", yaxs = "i", 
+                   las = 1, pch = 20, xlim = c(xmin, xmax), ylim = c(0, 
+                                                                     ceiling(max(d$logp))), xlab = xlabel, ylab = expression(-log[10](italic(p))))
+  dotargs <- list(...)
+  do.call("plot", c(NA, dotargs, def_args[!names(def_args) %in% 
+                                            names(dotargs)]))
+  if (!is.null(chrlabs)) {
+    if (is.character(chrlabs)) {
+      if (length(chrlabs) == length(labs)) {
+        labs <- chrlabs
+      }
+      else {
+        warning("You're trying to specify chromosome labels but the number of labels != number of chromosomes.")
+      }
+    }
+    else {
+      warning("If you're trying to specify chromosome labels, chrlabs must be a character vector")
+    }
+  }
+  if (nchr == 1) {
+    axis(1, ...)
+  }
+  else {
+    axis(1, at = ticks, labels = labs, ...)
+  }
+  col = rep(col, max(d$CHR))
+  if (nchr == 1) {
+    with(d, points(pos, logp, pch = 20, col = col[1], ...))
+  }
+  else {
+    icol = 1
+    for (i in unique(d$index)) {
+      with(d[d$index == unique(d$index)[i], ], points(pos, 
+                                                      logp, col = col[icol], pch = 20, ...))
+      icol = icol + 1
+    }
+  }
+  if (suggestiveline) 
+    abline(h = suggestiveline, col = "blue")
+  if (genomewideline) 
+    abline(h = genomewideline, col = "black",lty=2)
+  if (!is.null(highlight)) {
+    if (any(!(highlight %in% d$SNP))) 
+      warning("You're trying to highlight SNPs that don't exist in your results.")
+    d.highlight = d[which(d$SNP %in% highlight), ]
+    with(d.highlight, points(pos, logp, col = "green3", pch = 20, 
+                             ...))
+  }
+  if (!is.null(annotatePval)) {
+    topHits = subset(d, P <= annotatePval)
+    par(xpd = TRUE)
+    if (annotateTop == FALSE) {
+      with(subset(d, P <= annotatePval), textxy(pos, -log10(P), offset = 0.8, labs = topHits$SNP, cex = 1,font=3),  ...)
+    }
+    else {
+      topHits <- topHits[order(topHits$P), ]
+      topSNPs <- NULL
+      for (i in unique(topHits$CHR)) {
+        chrSNPs <- topHits[topHits$CHR == i, ]
+        topSNPs <- rbind(topSNPs, chrSNPs[1, ])
+      }
+      textxy(topSNPs$pos, -log10(topSNPs$P), offset = 0.625, 
+             labs = topSNPs$SNP, cex = 0.5, ...)
+    }
+  }
+  par(xpd = FALSE)
+}
+
+n_probands = length(unique(sim_undiagnosed$id_number))
+
+library(plyr)
+functional = ddply(o, "region_id", function(df) data.frame(n = nrow(df)))
+functional = rbind(functional, data.frame(region_id = fb_active$region_id[!(fb_active$region_id %in% functional$region_id)], n = 0))
+functional$mu_snp = fb_active$p_snp_null[match(functional$region_id, fb_active$region_id)]
+
+functional$chr = gsub("chr", "", fb_active$chr[match(functional$region_id, fb_active$region_id)])
+functional[functional$chr == "X","chr"] <- 23
+functional[functional$chr == "Y","chr"] <- 24
+functional$chr <- as.numeric(functional$chr)
+
+functional$start = conserved$start[match(functional$region_id, fb_active$region_id)]
+functional$p_val = ppois(functional$n - 1, lambda = functional$mu_snp*n_probands, lower.tail = FALSE)  # no cancellation
+
+manhattan(functional,chr="chr",bp="start",p="p_val","snp"="region_id",annotateTop = FALSE,suggestiveline = FALSE, genomewideline = -log10(0.05/nrow(conserved)) ,annotatePval = 1.2*0.05/nrow(conserved),col=c("#D55E00","#56B4E9"),cex=1.5, ylim = c(0,6))
+```
+
+
+
+```{r table with counts and p values}
+library(knitr)
+
+functional$annotation = conserved$annotation[match(functional$region_id, conserved$region_id)]
+
+f = functional[order(functional$p_val), c("region_id", "annotation", "n", "p_val")]
+kable(subset(f, n > 1))
+
+o_recurrent = subset(o, region_id %in% obs_recurrent_elements)
+write.table(o_recurrent, file = "../data/recurrent_element_dnms_8k_manuscript.txt", col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t")
+write.table(obs_recurrent_elements, file = "../data/recurrent_elements_8k_manuscript.txt", col.names = FALSE, row.names = FALSE, quote = FALSE, sep = "\t")
+
+```

@@ -1,0 +1,160 @@
+---
+title: "Figure S3 - MAPS across tissue activity groups"
+author: "Patrick Short"
+date: "19 January 2017"
+output: html_document
+---
+
+```{r load the unaff parental variants}
+source("~/phd/code/dddMAPS/dddMAPS/MAPS.R")
+source("~/phd/code/dddMAPS/dddMAPS/MAPS_plotting_extras.R")
+source("../R/annotation_tools.R")
+library(stringr)
+
+unaff_parent_variants = read.table("../data/unaffected_parent_alleles_all_chromosomes.FS_20.phylop.txt", header = TRUE, sep = "\t")
+
+unaff_parents_dhs = read.table("../data/unaffected_parent_alleles_all_chromosomes.CADD.DHS_broad_peak_fdr_0.01.chromHMM.AllRoadmapTissues.txt", header = TRUE, sep = "\t")
+
+unaff_parent_variants = merge(unaff_parent_variants, unaff_parents_dhs)
+
+
+```
+
+First, let's use the dddMAPS package to look for evidence of purifying selection across the three different element sets.
+
+```{r load the elements of interest}
+
+noncoding_control_elements = read.table("../data/noncoding_control_elements.10bp_buffer.min10_coverage.30bp_element_minimum.30x_probe_coverage_minimum.no_ddg2p_overlap.txt", header = TRUE, sep = "\t")
+coding_elements = read.table("../data/gencode.v19.CDS.probe_overlap.min10_coverage.txt", header = TRUE, sep = "\t")
+heart_elements = read.table("../data/heart_elements.10bp_buffer.min10_coverage.30bp_element_minimum.txt", header = TRUE, sep = "\t")
+conserved_elements = read.table("../data/conserved_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+enhancer_elements = read.table("../data/enhancer_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+
+
+```
+
+Now, we can test evidence for purifying selection across different tissue sets in the unaffected parents.
+
+```{r define the tissue sets}
+
+ESC = c("E002", "E008", "E001", "E015", "E014", "E016", "E003", "E024")
+iPSC = c("E020", "E019", "E018", "E021", "E022")
+ES_derived_tissues = c("E007", "E009", "E010", "E013", "E012", "E011", "E004", "E005", "E006")
+blood = c("E062", "E034", "E045", "E033", "E044", "E043", "E039", "E041", "E042", "E040", "E037", "E048", "E038", "E047")
+hsc_and_b_cell = c("E029", "E031", "E035", "E051", "E050", "E036", "E032", "E046", "E030")
+mesench = c("E026", "E049", "E025", "E023")
+myostat = c("E052")
+epithelial = c("E055","E056","E059","E061","E057","E058","E028","E027")
+neurosphere = c("E054", "E053")
+thymus = c("E112", "E093")
+adult_brain = c("E071", "E074", "E068", "E069", "E072", "E067", "E073", "E070")
+adipose = c("E063")
+adult_muscle = c("E100", "E108","E107")
+adult_heart = c("E104", "E095", "E105", "E065")
+smooth_muscle = c("E078", "E076", "E103", "E111")
+adult_digestive = c("E109", "E106", "E075", "E101", "E102", "E110", "E077", "E079", "E094")
+
+fetal = c("E080", "E081", "E082", "E083", "E084", "E085", "E086", "E088", "E089", "E090", "E092", "E093", "E017") # E091, placenta not tested because it is not strictly fetal
+fetal_brain = c("E082", "E081")
+ES_derived_neuronal = c("E007", "E009", "E010")
+
+developmental = c(fetal, ES_derived_neuronal, ESC)
+
+#unaffected_parents_DHS = read.table("../data/unaffected_parent_alleles_all_chromosomes.CADD.DHS_broad_peak_fdr_0.01.AllRoadmapTissues.txt", header = TRUE, sep = "\t")
+
+#unaffected_parents_DHS = subset(unaffected_parents_DHS, nchar(as.character(unaffected_parents_DHS$ref)) == 1 & nchar(as.character(unaffected_parents_DHS$alt)) == 1)
+
+```
+
+
+What proportion of the conserved elements are quiescent in all tissues?
+
+```{r add chromHMM}
+library(plyr)
+conserved$region_id = paste0(conserved$chr, ":", conserved$start, "-", conserved$stop)
+
+u = filter_with_bed(unaff_parent_variants, conserved)
+u$region_id = get_region_id(u, conserved)
+
+q = ddply(u, "region_id", function(df) data.frame(all_repressed = all(unlist(df[,grepl("E[0-1][0-9][0-9]_chromHMM", colnames(df))]) %in% c("9_Het", "13_ReprPC", "14_ReprPCWk", "15_Quies")), all_quiescent = all(unlist(df[,grepl("E[0-1][0-9][0-9]_chromHMM", colnames(df))]) %in% c("9_Het", "15_Quies")), all_polycomb = all(unlist(df[,grepl("E[0-1][0-9][0-9]_chromHMM", colnames(df))]) %in% c("13_ReprPC", "14_ReprPCWk")), n = nrow(df)))
+
+```
+
+Let's characterize these inactive elements more closely:
+
+```{r characterize inactive}
+
+quiescent = subset(conserved, region_id %in% q$region_id[q$all_quiescent])
+polycomb_inactive = subset(conserved, (region_id %in% q$region_id[q$all_repressed]) & !(region_id %in% q$region_id[q$all_quiescent]))
+
+active = subset(conserved, !(region_id %in% q$region_id[q$all_repressed]))
+inactive = rbind(quiescent, polycomb_inactive)
+
+vars_active = filter_with_bed(unaff_parent_variants, active)
+vars_inactive = filter_with_bed(unaff_parent_variants, inactive)
+
+
+vars_active$annotation = "Active CNEs"
+vars_inactive$annotation = "Inactive CNEs"
+
+
+v = rbind(vars_active, vars_inactive)
+
+active_inactive = maps_adjust(v, v$annotation, maps_lm)
+e = maps_ggplot(names(active_inactive$ps_adjusted), active_inactive$ps_adjusted, active_inactive$standard_error, already_ordered = FALSE, add_coding_fixed = FALSE, score_name = "")
+e + ggtitle("CNEs inactive in all Roadmap Tissues\n")
+
+# check phastcons score for CNEs (active v inactive)
+library(phastCons100way.UCSC.hg19)
+
+active_intervals = GRanges(seqnames=active$chr, IRanges(start = active$start, width = active$stop - active$start + 1))
+inactive_intervals = GRanges(seqnames=inactive$chr, IRanges(start = inactive$start, width = inactive$stop - inactive$start + 1))
+
+active_phastcons100 = scores(phastCons100way.UCSC.hg19, active_intervals)
+inactive_phastcons100 = scores(phastCons100way.UCSC.hg19, inactive_intervals)
+
+phastcons = data.frame(phastcons100 = c(active_phastcons100, inactive_phastcons100), set = c(rep("Active CNEs", length(active_phastcons100)), rep("Inactive CNEs", length(inactive_phastcons100))))
+
+ggplot(phastcons, aes(set, phastcons100, fill = set)) + geom_violin() +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank()) + ggtitle("Active v. Inactive CNEs") + ylab("phastcons100\n") + xlab("") + guides(fill=FALSE)
+
+```
+
+
+What proportion of these elements are active in each tissue?
+
+```{r active in each tissue}
+library(ggplot2)
+
+# TRUE means inactive and FALSE means active
+a = ddply(u, "region_id", function(df) colSums(matrix(unlist(df[,grepl("E[0-1][0-9][0-9]_chromHMM", colnames(df))]) %in% c("9_Het", "13_ReprPC", "14_ReprPCWk", "15_Quies"), nrow = nrow(df))) == nrow(df))
+colnames(a) = c("region_id", colnames(u)[grepl("E[0-1][0-9][0-9]_chromHMM", colnames(u))])
+
+active_per_tissue = nrow(a) - colSums(a[-1])
+
+df = data.frame(tissue = names(active_per_tissue), counts = active_per_tissue)
+df$set = "Other"
+df$set[df$tissue %in% paste0(developmental, "_chromHMM")] = "developmental"
+df$set[df$tissue %in% c(paste0(blood, "_chromHMM"), paste0(hsc_and_b_cell, "_chromHMM"))] = "blood cells"
+df$set[df$tissue %in% paste0(epithelial, "_chromHMM")] = "epithelial"
+df$set[df$tissue %in% paste0(adult_brain, "_chromHMM")] = "adult_brain"
+df$set[df$tissue %in% paste0(adult_muscle, "_chromHMM")] = "adult_muscle"
+df$set[df$tissue %in% paste0(adult_heart, "_chromHMM")] = "adult_heart"
+df$set[df$tissue %in% paste0(adult_digestive, "_chromHMM")] = "adult_digestive"
+
+ordered_tissues = as.character(df$tissue[order(df$set)])
+df$tissue = factor(df$tissue, levels = ordered_tissues, ordered = TRUE)
+
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+ggplot(df) + geom_bar(aes(x = tissue, y = counts, fill = set), stat = "identity") + scale_fill_manual(values = cbbPalette) + 
+  xlab("Tissues") + ylab("Number of Active CNEs (out of 4,300)") +
+      theme_bw(base_size = 18) + 
+      theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+      theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+      theme(legend.title = element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())
+
+
+```
