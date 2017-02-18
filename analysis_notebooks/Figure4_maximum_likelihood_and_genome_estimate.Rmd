@@ -9,6 +9,74 @@ Code to generate Figure 4 of the non-coding burden paper.
 
 ```{r use power calc to generate ML model}
 
+conserved_fb_active = read.table("../data/conserved_elements.min10_coverage.fb_active_roadmap_union.txt", header = TRUE, sep = "\t")
+
+prevalence<-1/120 # fold enrichment of LOF mutations in DDD cohort
+penetrance<-1 # penetrance of LoF mutations, to allow estimate of frequency of LoF mutations in cohort
+num.trios<-6239
+recurr=seq(2,6)
+num.transmissions<-num.trios*2
+thresh<-0.05/nrow(conserved_fb_active) # p value required to detect significantly mutated gene
+max.DNMs<-10 # max number of DNMs to consider
+
+
+n_lof = seq(0, 2613, 20)
+lof.multiplier = seq(0.0001,.0801, 0.0001)
+
+store_likelihood <-matrix(ncol=length(n_lof), nrow=length(lof.multiplier))
+colnames(store_likelihood) = n_lof
+rownames(store_likelihood) = lof.multiplier
+
+p0 <- function(power) {
+  power = power[sample(length(power), n_lof[i])]
+  d = 1 - power # probability of NOT discovering each element
+  prob_of_zero = prod(d) # probability of not discovering ANY of the elements 
+  return(prob_of_zero)
+}
+
+for(i in seq(1,length(n_lof))) {
+
+	for(j in seq(1,length(lof.multiplier))) {
+		
+	  lof.rate = conserved_fb_active$p_snp_null * lof.multiplier[j]
+	  
+	  # how many DNMs needed to meet significance threshold given this number of trios in this gene
+		min.hits <- sapply(conserved_fb_active$p_snp_null, function(l) min(which(ppois(0:max.DNMs,l*num.trios*2, lower.tail=F)<thresh)))
+		
+		# how likely to see this minimum number of DNMs
+		power <- ppois(min.hits-1, lof.rate*num.trios*2/prevalence*penetrance + conserved_fb_active$p_snp_null*num.trios*2, lower.tail=F)
+		
+		prob_of_zero = median(replicate(10, p0(power))) # probability of zero elements meeting genome-wide signifiance threshold
+		
+	  store_likelihood[j, i] = prob_of_zero 
+		
+	}
+	
+}	
+
+
+library(reshape2)
+library(ggplot2)
+m = melt(store_likelihood, varnames = c("lof.rate", "n_lof"), value.name = "probability_of_finding_zero")
+m$prop_lof = m$n_lof/max(m$n)
+
+ggplot(m) + geom_tile(aes(lof.rate, n_lof, fill = probability_of_finding_zero)) + 
+  scale_fill_gradient(low = "white", high = "blue", guide = guide_colorbar(title = "Probability of Observing\nZero Elements")) + 
+  xlab("Proportion of Mutations\nResulting in Loss of Function") + 
+  ylab("Number of Elements with\nMonoallelic Loss of Function Mechanism") +
+  theme_bw(base_size = 18) +
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+
+
+ggplot(subset(m, (lof.rate < 0.04) & (n_lof < 1000))) + geom_tile(aes(lof.rate, n_lof, fill = probability_of_finding_zero)) + 
+  scale_fill_gradient(low = "white", high = "blue", guide = guide_colorbar(title = "Probability of Observing\nZero Elements")) + 
+  xlab("Proportion of Mutations\nResulting in Loss of Function") + 
+  ylab("Number of Elements with\nMonoallelic Loss of Function Mechanism") +
+  theme_bw(base_size = 18) +
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+
 
 ```
 
