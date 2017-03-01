@@ -103,8 +103,6 @@ Recurrently mutated elements:
 source("../R/visualization.R")
 
 fb_active = rbind(conserved_fb_active, enhancer_fb_active_conserved[,-8])
-#fb_active = enhancer_fb_active_conserved
-#fb_active = conserved_fb_active
 
 o = filter_with_bed(obs_undiagnosed, fb_active)
 s = filter_with_bed(sim_undiagnosed, fb_active)

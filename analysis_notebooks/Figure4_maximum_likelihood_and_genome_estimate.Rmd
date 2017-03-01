@@ -44,6 +44,8 @@ for(i in seq(1,length(n_lof))) {
 		min.hits <- sapply(conserved_fb_active$p_snp_null, function(l) min(which(ppois(0:max.DNMs,l*num.trios*2, lower.tail=F)<thresh)))
 		
 		# how likely to see this minimum number of DNMs
+		# the expected is the mutability of the element plus the mutability of any lof sites scaled by the 'prevalence' which
+		# is the enrichment of LOF mutations in DD
 		power <- ppois(min.hits-1, lof.rate*num.trios*2/prevalence*penetrance + conserved_fb_active$p_snp_null*num.trios*2, lower.tail=F)
 		
 		prob_of_zero = median(replicate(10, p0(power))) # probability of zero elements meeting genome-wide signifiance threshold
@@ -86,7 +88,7 @@ Using the data we have here, we want to make a genome-wide estimate of the contr
 
 We will consider all of the non-coding elements here and split into quantiles of phastcons100 score:
 
-```{r load elements and score with phastcons}
+```{r load elements and gencode transcripts}
 library(phastCons100way.UCSC.hg19)
 library(GenomicRanges)
 
@@ -104,7 +106,8 @@ colnames(gencode_v19_CDS) = c("chr", "start", "stop", "chromHMM")
 
 ```
 
-```{r load DHS data}
+```{r load Roadmap fetal brain DHS data}
+
 source("../R/mutation_null_model.R")
 source("../R/annotation_tools.R")
 
@@ -158,10 +161,6 @@ union_granges = function(b1, b2) {
                    stop = as.integer(i@ranges@start + i@ranges@width - 1))
   return(new)
 }
-
-#male_fb_chromHMM = subset(male_fb_chromHMM, !(chromHMM %in% c("9_Het", "15_Quies", "13_ReprPC", "14_ReprPCWk")))
-#female_fb_chromHMM = subset(female_fb_chromHMM, !(chromHMM %in% c("9_Het", "15_Quies", "13_ReprPC", "14_ReprPCWk")))
-#fb_dhs = union_granges(male_fb_chromHMM, female_fb_chromHMM)
 
 fb_dhs = union_granges(male_fb_dhs, female_fb_dhs)
 fb_dhs = difference_granges(fb_dhs, gencode_v19_CDS)
@@ -241,9 +240,6 @@ stops = seq(n, nrow(ddd_fb_dhs), by = j)
 
 ddd = do.call(rbind,mapply(obs_expected_df, starts, stops, MoreArgs = list(obs = o, elements = ddd_fb_dhs), SIMPLIFY = FALSE))
 
-#ddd = do.call(rbind,mapply(obs_expected_df, seq(0,0.7, 0.01), seq(0.3, 1, 0.01), MoreArgs = list(obs = o, elements = ddd_fb_dhs), SIMPLIFY = FALSE))
-
-
 ddd$ratio = ddd$observed/ddd$expected
 
 ```
@@ -252,16 +248,8 @@ Now, estimate the genome-wide mutability in each of these categories.
 
 ```{r genome-wide mutability}
 
-nc = read.table("../data/phastcons_g10_g100bp.bed", header = FALSE, sep = "\t")
-colnames(nc) = c("chr", "start", "stop", "lod", "score")
-
 set.seed(42)  # we pick 1000 randomly sampled sequences in because generating phastcons and mutability is slow
 sample_size = 1000
-#fb_dhs_nc = intersect_granges(fb_dhs, nc)
-#fb_dhs_nc$bp = fb_dhs_nc$stop - fb_dhs_nc$start
-#fb_dhs_nc = subset(fb_dhs_nc, bp > 100)
-#multiplier = nrow(fb_dhs_nc)/sample_size
-#fb_dhs_sample = fb_dhs_nc[sample(seq(1, nrow(fb_dhs_nc)), sample_size, replace = FALSE),]
 
 multiplier = nrow(fb_dhs)/sample_size
 fb_dhs_sample = fb_dhs[sample(seq(1, nrow(fb_dhs)), sample_size, replace = FALSE),]
@@ -278,7 +266,6 @@ wg = ddply(fb_dhs_sample, "phastcons_quantile", function(df) data.frame(expected
 
 hist(fb_dhs_sample$phastcons100, xlab = "Evolutionary Conservation of DHS Peak (phastcons100)", main = "Whole Genome phastcons distribution")
 
-
 # plot distribution in each bin
 fb_dhs_sample$phastcons_bins = cut(fb_dhs_sample$phastcons100, seq(0,1,0.1), include.lowest = TRUE)
 megabase = ddply(fb_dhs_sample, "phastcons_bins", function(df) data.frame(megabase = sum(df$stop - df$start)*multiplier/1e6))
@@ -293,10 +280,6 @@ Using logistic regression:
 d = ddd
 d$excess = d$ratio - 1
 d$excess[d$excess < 0] = 0
-#d$excess[d$mid < break_point] = 0
-
-#d$excess = d$excess
-#d = subset(d, mid > 0.8)
 
 fit <- glm(excess/max(d$excess) ~ mid, data=d, family=binomial())
 fit_pred = predict(fit, data.frame(mid = seq(0,1,0.01)), type = "response", se.fit = TRUE)
@@ -304,9 +287,7 @@ fit_lower <- approxfun(seq(0,1,0.01), 1 + (fit_pred$fit - 1.96*fit_pred$se.fit)*
 fit_upper <- approxfun(seq(0,1,0.01), 1 + (fit_pred$fit + 1.96*fit_pred$se.fit)*max(d$excess))
 
 plot(d$mid, d$ratio, xlim = c(0, 1.0), ylim = c(0.5, 1.5), ylab = "Observed/Expected in DDD", xlab = "Evolutionary Conservation of DHS peak (phastcons100)", main = "DNM enrichment across evolutionary conservation spectrum\n")
-#for (i in seq(1,nrow(d))) {
-  #lines(x = c(d$mid[i], d$mid[i]), y = c(d$observed[i]/(d$expected[i] - 2*sqrt(d$expected[i])), d$observed[i]/(d$expected[i] + 2*sqrt(d$expected[i]))))
-#}
+
 fit_plot = predict(fit, data.frame(mid = seq(0,1,0.01)), type = "response", se.fit = TRUE)
 lines(seq(0,1,0.01), 1 + fit_plot$fit*max(d$excess))
 lines(seq(0,1,0.01), 1 + (fit_plot$fit + 1.96*fit_plot$se.fit)*max(d$excess))

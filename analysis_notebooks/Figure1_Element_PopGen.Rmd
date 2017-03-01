@@ -13,16 +13,13 @@ source("~/phd/code/dddMAPS/dddMAPS/MAPS_plotting_extras.R")
 source("../R/annotation_tools.R")
 library(stringr)
 
+# all unaff parent variants with fisher strand filtering and evol conservation score
 unaff_parent_variants = read.table("../data/unaffected_parent_alleles_all_chromosomes.FS_20.phylop.txt", header = TRUE, sep = "\t")
 
-#intervals = read.table("../data/de_novo_analysis_regions.8August2016.txt", header = TRUE, sep = "\t")
-#unaff_parent_variants$context = get_context(unaff_parent_variants$chr, unaff_parent_variants$pos, intervals)
-#unaff_parent_variants$alt_context = unaff_parent_variants$context
-#str_sub(unaff_parent_variants$alt_context, 2, 2) <- unaff_parent_variants$alt  # replace with alt
-#write.table(unaff_parent_variants, file = "../data/unaffected_parent_alleles_all_chromosomes.FS_20.phylop.txt", col.names = TRUE, sep = "\t", quote = FALSE, row.names = FALSE)
-
+# all unaff parent variants with DHS annotation
 unaff_parents_dhs = read.table("../data/unaffected_parent_alleles_all_chromosomes.CADD.DHS_broad_peak_fdr_0.01.chromHMM.AllRoadmapTissues.txt", header = TRUE, sep = "\t")
 
+# merge to add DHS annotation
 unaff_parent_variants = merge(unaff_parent_variants, unaff_parents_dhs)
 
 ```
