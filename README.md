@@ -1,5 +1,5 @@
 # De novo mutations in regulatory elements cause developmental disorders
-Code for paper published in February, 2017 analysing the role of de novo mutations in severe developmental disorders (part of the deciphering developmental disorders project).
+Code for paper published in March, 2017 analysing the role of de novo mutations in severe developmental disorders (part of the deciphering developmental disorders project).
 
 This analysis is broadly separated into three major parts:
 1. Population genetics analysis of conserved non-coding elements (uses the dddMAPS library https://github.com/pjshort/dddMAPS).
