@@ -1,0 +1,92 @@
+---
+title: "Figure S10 - ChromHMM state of recurrently mutated elements"
+author: "Patrick Short"
+date: "1 March 2017"
+output: html_document
+---
+
+
+What is the predicted chromatin state of the recurrently mutated DNMs? Mostly transcribed, enhancer, etc.?
+
+
+```{r load recurrent}
+library(ggplot2)
+source("../R/annotation_tools.R")
+
+# load recurrent DNMs in CNEs and conserved enhancers
+r = read.table("../data/conserved_and_enhancer_fb_active_recurrent_DNMs.txt", header = TRUE, sep = "\t")
+
+male_fb_chromHMM = read.table("../data/E081_15_coreMarks_mnemonics.bed", header = FALSE, sep = "\t")
+colnames(male_fb_chromHMM) = c("chr", "start", "stop", "chromHMM")
+
+female_fb_chromHMM = read.table("../data/E082_15_coreMarks_mnemonics.bed", header = FALSE, sep = "\t")
+colnames(female_fb_chromHMM) = c("chr", "start", "stop", "chromHMM")
+
+get_chromHMM <- function(de_novos, chromHMM) {
+  
+  dn = GRanges(seqnames=Rle(de_novos$chr), ranges = IRanges(start = de_novos$pos, end = de_novos$pos))
+  c = GRanges(seqnames=Rle(chromHMM[,1]), ranges = IRanges(start = chromHMM[,2], end = chromHMM[,3]-1))
+  
+  hits = findOverlaps(dn,c)
+  
+  return(chromHMM$chromHMM[subjectHits(hits)])
+
+}
+
+r$region_id = get_region_id(r, conserved)
+r$male_fb_chromHMM = get_chromHMM(r, male_fb_chromHMM)
+r$female_fb_chromHMM = get_chromHMM(r, female_fb_chromHMM)
+
+# any element that was predicted 'quiescent' in both male/female must be overlapping DHS to be included in fetal brain active set
+c = as.character(r$female_fb_chromHMM)
+c[c == "15_Quies"] = as.character(r$male_fb_chromHMM[c == "15_Quies"])
+c[c == "15_Quies"] = "Overlaps_DHS"
+
+
+ggplot() + geom_histogram(aes(c), stat = "count") + theme_bw(base_size = 18) + coord_flip() +
+  theme(strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  ggtitle("chromHMM state of recurrently mutated elements") + xlab("Chromatin State") + ylab("Count (DNMs)")
+
+
+```
+
+Compare the observed recurrent to simulated:
+
+```{r simulated chromatin states}
+library(stringr)
+
+# load simulated data from DenovoSim using number of exome-negative probands
+sim = read.table("../data/noncoding_sim.1k_runs.8k.8August2016.txt", header = TRUE, sep = "\t")
+sim$id_number = as.numeric(str_split_fixed(sim$person_stable_id, "\\.", 4)[,2])
+
+# conserved elements
+s = filter_with_bed(sim_undiagnosed, conserved_and_enhancer_fb_active)
+s$region_id = get_region_id(s, conserved)
+
+s$recurr_id = paste0(s$region_id, ".", s$iteration)
+t = table(s$recurr_id)
+r_sim = subset(s, recurr_id %in% names(t)[t>1])
+
+r_sim$male_fb_chromHMM = get_chromHMM(r_sim, male_fb_chromHMM)
+r_sim$female_fb_chromHMM = get_chromHMM(r_sim, female_fb_chromHMM)
+
+c_sim = as.character(r_sim$male_fb_chromHMM)
+c_sim[c_sim == "15_Quies"] = as.character(r_sim$female_fb_chromHMM[c_sim == "15_Quies"])
+c_sim[c_sim == "15_Quies"] = "Overlaps_DHS"
+
+c_sim = table(c_sim)/length(unique(s$iteration))
+c = table(c)
+c[names(c_sim)[!(names(c_sim) %in% names(c))]] = 0
+
+c = c[order(names(c))]
+
+df = data.frame("chromHMM" = c(names(c), names(c_sim)), "count" = c(c, c_sim), set = c(rep("observed", length(c)), rep("simulated", length(c_sim))))
+
+ggplot(df) + geom_bar(aes(chromHMM, count, fill = set),  position = position_dodge(), stat = "identity") + 
+  theme_bw(base_size = 18) + coord_flip() +
+  theme(strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), legend.title = element_blank()) +
+  ggtitle("chromHMM state of recurrently mutated elements") + xlab("Chromatin State") + ylab("Count (DNMs)")
+
+```

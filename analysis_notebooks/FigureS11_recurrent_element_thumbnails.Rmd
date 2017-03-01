@@ -1,0 +1,294 @@
+---
+title: "Figure S11 - Generate Thumbnails for Recurrently Mutated Elements"
+author: "Patrick Short"
+date: "1 March 2017"
+output: html_document
+---
+
+
+```{r annotate dnms}
+# visualizing element
+
+# idea is to have track-like format where the element is annotate with DNMs and any
+# rare/common variants
+# below, we can add any necessary tracks (phastcons, phylop, predicted TF binding, DHS, etc)
+
+source("../R/annotation_tools.R")
+library(ggplot2)
+library(stringr)
+
+annotate_dnms <- function(obs, element, multi = FALSE) {
+  # element should have chr, start, stop at least
+  
+  if (nrow(element) > 1){
+    stop("Only pass a single element.")
+  }
+  
+  o = filter_with_bed(obs, element)
+  
+  chr = element$chr
+  start = element$start
+  stop = element$stop
+  
+  sites = o$pos - start
+  
+  # draw a rectangle and label chromosome, start, and stop
+  
+  annot_y = 3
+  
+  rectangle = data.frame(x = c(start, stop, stop, start), y = rep(c(annot_y,annot_y+1), each = 2), fill = "element")
+  
+  if (!is.list(multi)) {  # multi can be a ggplot object (list) - if not then make from scratch
+    e = ggplot() + geom_polygon(data = rectangle, aes(x=x,y=y)) + ylim(limits = c(0, 8)) + 
+    theme_bw(base_size = 20) + 
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+    theme(legend.title = element_blank(), legend.text = element_text(size = 22)) + 
+    ggtitle(paste0(chr, ":", start, "-", stop)) +
+    xlab("coordinates") + ylab("") + 
+    scale_x_continuous(labels = c(start, stop), breaks = c(start, stop))
+    
+    # add 'lollipop' at each DNM site (colored red)
+    sites = data.frame(chr = chr, pos = o$pos)
+
+    e = e + geom_segment(data = sites, aes(x = pos, xend = pos, y = annot_y + 1, yend = annot_y + 1.5)) + 
+    geom_point(data = sites, aes(x = pos, y = annot_y + 1.5), size = 4, color = "red")
+    return(e)
+    
+  } else {
+    multi = multi + geom_polygon(data = rectangle, aes(x=x,y=y))
+    
+    sites = data.frame(chr = chr, pos = o$pos)
+
+    multi = multi + geom_segment(data = sites, aes(x = pos, xend = pos, y = annot_y + 1, yend = annot_y + 1.5)) + 
+    geom_point(data = sites, aes(x = pos, y = annot_y + 1.5), size = 4, color = "red")
+    return(multi)
+  }
+  
+}
+
+# add variants in unaffected parents
+
+add_parents <- function(vars, element, e, freq = "all") {
+  # element should have chr, start, stop at least
+  
+  if (nrow(element) > 1){
+    stop("Only pass a single element.")
+  }
+  
+  v = filter_with_bed(vars, element)
+  
+  if (nrow(v) == 0) {
+    return(e)
+  }
+  
+  common = subset(v, allele_count > 14)
+  rare = subset(v, allele_count <= 14)
+  
+  chr = element$chr
+  start = element$start
+  stop = element$stop
+  
+  annot_y = 3
+  
+  # add grey 'lollipop' at each variant
+  sites = data.frame(chr = chr, pos = v$pos)
+  
+  if (freq == "common") {
+    if (nrow(common) == 0) {
+      return(e)
+    }
+    sites = data.frame(chr = chr, pos = common$pos)
+  }
+  
+  e = e + geom_segment(data = sites, aes(x = pos, xend = pos, y = annot_y + 1, yend = annot_y + 1.2)) + 
+    geom_point(data = sites, aes(x = pos, y = annot_y + 1.2), size = 3, color = "grey")
+  
+  return(e)
+  
+}
+```
+
+```{r add phastcons}
+
+# add phastcons score (every 5 bp)
+library(phastCons100way.UCSC.hg19)
+
+add_phastcons <- function(obs, element, e) {
+  
+  chr = element$chr
+  start = element$start
+  stop = element$stop
+  
+  # add extra phastcons buffer
+  start = start - 0.50*(stop - start)
+  stop = stop + 0.50*(stop - start)
+
+
+  # get phastcons score for every site in element
+  element_grange = GRanges(seqnames=element$chr, IRanges(start = seq(start, stop, by = 5), width = 5))
+  p = scores(phastCons100way.UCSC.hg19, element_grange)
+
+  phastcons = data.frame(x = c(seq(start, stop, by = 5), stop, stop, start), y = c(p, 0, 0, 0) + 1.5)
+  
+  e = e + geom_polygon(data = phastcons, aes(x = x, y = y), fill = "blue")
+  
+}
+
+
+# add fetal brain DHS peak
+fetal_brain_male = read.table(gzfile("../data/E081-DNase.hotspot.fdr0.01.broad.bed.gz"), header = FALSE, sep = "\t")
+colnames(fetal_brain_male) = c("chr", "start", "stop", "id", "intensity")
+
+fetal_brain_female = read.table(gzfile("../data/E082-DNase.hotspot.fdr0.01.broad.bed.gz"), header = FALSE, sep = "\t")
+colnames(fetal_brain_female) = c("chr", "start", "stop", "id", "intensity")
+
+add_DHS <- function(obs, element, e) {
+  chr = element$chr
+  start = element$start
+  stop = element$stop
+  
+  element_grange = GRanges(seqnames=element$chr, IRanges(start = start, width = stop - start + 1))
+  
+  fbm = GRanges(seqnames = Rle(fetal_brain_male$chr), ranges = IRanges(start = fetal_brain_male$start, end = fetal_brain_male$stop))
+  fbm_overlap = findOverlaps(fbm, element_grange)
+  fbm_overlap = fetal_brain_male[queryHits(fbm_overlap),]
+  
+  fbf = GRanges(seqnames = Rle(fetal_brain_female$chr), ranges = IRanges(start = fetal_brain_female$start, end = fetal_brain_female$stop))
+  fbf_overlap = findOverlaps(fbf, element_grange)
+  fbf_overlap = fetal_brain_female[queryHits(fbf_overlap),]
+  
+  if (nrow(fbm_overlap) == 0 & nrow(fbf_overlap) == 0) {
+    return(e)
+  }
+  
+  # add dhs cartoon because we don't have exact intensities
+  if (nrow(fbm_overlap) != 0) {
+    dhs_male = NULL
+    for (hit in seq(1, nrow(fbm_overlap))) {
+      dhs_male = rbind(dhs_male, data.frame(x = c(seq(fbm_overlap$start[hit], fbm_overlap$stop[hit], length.out = 9), fbm_overlap$start[hit]), y = c(0, 0.1, 0.4, 0.8, 1.0, 0.8, 0.4, 0.1, 0, 0), sex = "male"))
+    }
+  } else {
+    dhs_male = NULL
+  }
+  
+  # add dhs cartoon because we don't have exact intensities
+  if (nrow(fbf_overlap) != 0) {
+    dhs_female = NULL
+    for (hit in seq(1, nrow(fbf_overlap))) {
+      dhs_female = rbind(dhs_female, data.frame(x = c(seq(fbf_overlap$start[hit], fbf_overlap$stop[hit], length.out = 9), fbf_overlap$start[hit]), y = c(0, 0.1, 0.4, 0.8, 1.0, 0.8, 0.4, 0.1, 0, 0), sex = "female"))
+    }
+  } else {
+    dhs_female = NULL
+  }
+  
+  dhs = rbind(dhs_male, dhs_female)
+  
+  e + geom_polygon(data = dhs, aes(x = x, y = y, fill = sex), alpha = 0.5)
+
+}
+
+```
+
+```{r add jaspar}
+
+# add predicted TF binding sites
+
+# write the name of the motif in RED if LOB, BLUE if GOB and grey if silent
+
+add_jaspar <- function(obs_denovoTF, element, e) {
+  if (nrow(element) > 1){
+    stop("Only pass a single element.")
+  }
+  
+  o = filter_with_bed(obs_denovoTF, element)
+  o = subset(o, result != "SILENT")
+  
+  if (nrow(o) == 0) {
+    return(e)
+  }
+  
+  c = unlist(sapply(o$result, function(r) if (r == "LOSS") "red" else "blue"))
+  
+  e = e + annotate("text", label = as.character(o$tfbs_name), x = o$pos, y = seq(from = 4.8, by = 0.2, length.out = length(c)), color = c)
+}
+
+```
+
+Add the closest gene/exon:
+
+```{r add closest gene and exon}
+
+
+add_nearest_exon <- function(element, e) {
+  if (nrow(element) > 1){
+    stop("Only pass a single element.")
+  }
+  
+  element$closest_gene = get_element_closest_gene(element, gencode)
+  element$distance_to_closest_gene = get_distance_to_closest_gene(element, gencode)
+  
+  element$closest_exon = get_element_closest_gene(element, gencode_v19_CDS)
+  element$distance_to_closest_exon = get_distance_to_nearest_exon(element, gencode_v19_CDS)
+  
+  gene = subset(gencode, gene == element$closest_gene)
+
+  if ((element$start <= gene$stop) & (element$start >= gene$start)) {  # it is likely intronic or UTR
+    figure_position = ifelse(element$distance_to_closest_exon < 0, element$start, element$stop)
+    annotation = paste0(element$closest_exon, " exon: ", abs(element$distance_to_closest_exon), "bp")
+  } else {  # it is intergenic
+    figure_position = ifelse(element$distance_to_closest_gene < 0, element$start, element$stop)
+    annotation = paste0(element$closest_gene, " TSS: ", abs(element$distance_to_closest_gene), "bp")
+  }
+
+  arrow_df = data.frame(x = ifelse(element$distance_to_closest_exon < 0, element$start, element$stop), xend = ifelse(element$distance_to_closest_exon < 0, element$start, element$stop) + 150*sign(element$distance_to_closest_exon), y = 6.4, yend = 6.4)
+  
+  e = e + annotate("text", label = annotation, x = figure_position, y = 6.0) + geom_segment(data = arrow_df, aes(x = x, xend = xend, y = y, yend = yend), arrow = arrow(length = unit(0.02,"npc")))
+}
+
+
+```
+
+```{r visualize all}
+
+# load DNMs from recurrently mutated elements
+r = read.table("../data/recurrent_element_dnms_8k_manuscript.txt", header = TRUE, sep = "\t")
+
+# load DNMs with denovoTF predictions (see Figure S8)
+obs_denovoTF = read.table('../data/de_novos.ddd_8k.noncoding_analysis_regions_only.8August2016.denovoTF.txt', header = TRUE, sep = "\t")
+
+# filter the full set of elements to keep recurrently mutated
+recurr_elements = read.table("../data/recurrent_elements_8k_manuscript.txt", header = TRUE, sep = "\t")
+
+# get distance to nearest exon
+gencode_v19_CDS = read.table("../data/gencode.v19.CDS.protein_coding.bed", header = FALSE, sep = "\t")
+colnames(gencode_v19_CDS) = c("chr", "start", "stop", "gene")
+recurr_elements$distance_to_exon = get_distance_to_nearest_exon(recurr_elements, gencode_v19_CDS)
+
+gencode = read.table("../data/gencode_protein_coding_genes_v19_+strand.txt", header = TRUE, sep = "\t")
+gencode = subset(gencode, gene %in% gencode_v19_CDS$gene)
+recurr_elements$closest_gene = get_element_closest_gene(recurr_elements, gencode)
+recurr_elements$distance_to_gene = get_distance_to_closest_gene(recurr_elements, gencode)
+
+# load variants from unaffected parents to add as grey lollipops on the thumbnails
+vars = read.table("../data/unaffected_parent_alleles_all_chromosomes.txt", header = TRUE, sep = "\t")
+vars = filter_with_bed(vars, recurr_elements)
+
+
+save_element_plot <- function(i){
+  id = recurr_elements[i]
+  sprintf("Working on %s (element #%i)", id, i)
+  element = subset(conserved_fb_active, region_id == id)
+  e = annotate_dnms(obs, element)
+  e = add_parents(vars, element, e, freq = 'common')  # add those with MAF >0.1%
+  e = add_phastcons(obs, element, e)
+  e = add_DHS(obs, element, e)
+  e = add_jaspar(obs_denovoTF, element, e)
+  e = add_nearest_exon(element, e)
+  fname = paste0("../figures/element_snapshots/", id, "_recurrent_mutation_snapshot.common_variation_added.pdf")
+  ggsave(filename = fname, plot = e, width = 10, height = 6)
+}
+
+sapply(seq(1,nrow(recurr_elements)), save_element_plot)
+
+```
+

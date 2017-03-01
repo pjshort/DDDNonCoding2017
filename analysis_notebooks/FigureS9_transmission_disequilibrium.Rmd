@@ -1,0 +1,120 @@
+---
+title: "Figure S9 - test for transmission disequilibrium"
+author: "Patrick Short"
+date: "1 March 2017"
+output: html_document
+---
+
+
+Overtransmission of rare variants in fetal brain active conserved elements?
+
+```{r load data}
+source('../R/annotation_tools.R')
+
+conserved = read.table("../data/conserved_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+conserved_fb_active = read.table('../data/conserved_elements.min10_coverage.fb_active_roadmap_union.txt', header = TRUE, sep = "\t")
+conserved_fb_inactive = read.table('../data/conserved_elements.min10_coverage.fb_quiescent_roadmap_union.txt', header = TRUE, sep = "\t")
+enhancers = read.table("../data/enhancer_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+control_introns = read.table("../data/noncoding_control_elements.10bp_buffer.min10_coverage.30bp_element_minimum.txt", header = TRUE, sep = "\t")
+heart_elements = read.table("../data/heart_elements.10bp_buffer.min10_coverage.30bp_element_minimum.txt", header = TRUE, sep = "\t")
+
+# found that low-coverage regions had systematic undertransmission - restrict to  >20x coverage
+coverage = read.table("../data/noncoding_coverage_stats.tsv", header = TRUE, sep = "\t")
+coverage$chr = paste0("chr", coverage$chr)
+
+conserved_fb_active = merge(conserved_fb_active, coverage)
+conserved_fb_active = subset(conserved_fb_active, median_coverage > 20)
+
+conserved_fb_inactive = merge(conserved_fb_inactive, coverage)
+conserved_fb_inactive = subset(conserved_fb_inactive, median_coverage > 20)
+
+enhancers = merge(enhancers, coverage)
+enhancers = subset(enhancers, median_coverage > 20)
+
+control_introns = merge(control_introns, coverage)
+control_introns = subset(control_introns, median_coverage > 20)
+
+heart_elements = merge(heart_elements, coverage)
+heart_elements = subset(heart_elements, median_coverage > 20)
+
+
+# load variants with column added for transmission status (transmitted/not-transmitted) determined from parent VCFs
+variants = read.table("../data/all_elements_transmission.tsv", header = TRUE, sep = "\t")
+
+```
+
+```{r generate transmission plot}
+
+# restrict to SNVs
+v = subset(variants, nchar(as.character(alt)) == 1 & nchar(as.character(ref)) == 1)
+v$chr = paste0("chr", v$chrom)
+
+v = subset(v, gq > 20 & fs < 30 & dp > 10)
+v$variant_id = paste0(v$chr, ":", v$pos, v$ref, ">", v$alt)
+
+# remove top and bottom 1% of probands to avoid including outliers with excess/depletion of variants
+counts = sapply(split(v, v$sample_id), nrow)
+to_remove = c(names(counts)[counts > quantile(counts, seq(0,1,0.005))[200]], names(counts)[counts < quantile(counts, seq(0,1,0.005))[2]])
+
+v = subset(v, variant_id %in% names(internal_af)[internal_af < 0.001])
+v = subset(v, variant_id %in% names(t)[t == 1])
+
+synonymous = subset(v, cq == "synonymous_variant")
+
+variants_fb_active = filter_with_bed(v, conserved_fb_active)
+variants_fba_recurrent = filter_with_bed(v, recurrent_fba_elements)
+variants_fb_inactive = filter_with_bed(v, conserved_fb_inactive)
+variants_enhancers = filter_with_bed(v, enhancers)
+variants_introns = filter_with_bed(v, control_introns)
+variants_heart = filter_with_bed(v, heart_elements)
+
+synonymous = subset(v, cq == "synonymous_variant")
+missense = subset(v, cq == "missense_variant")
+stop_gained = subset(v, cq == "stop_gained")
+
+missense_ddg2p_mono_lof = filter_with_bed(missense, ddg2p_mono_lof)
+sg_ddg2p_mono_lof = filter_with_bed(stop_gained, ddg2p_mono_lof)
+
+fb_active = sum(variants_fb_active$type == "transmitted")/nrow(variants_fb_active)
+fb_active_se = sqrt(fb_active*(1-fb_active)/nrow(variants_fb_active))
+
+fb_active_recurrent = sum(variants_fba_recurrent$type == "transmitted")/nrow(variants_fba_recurrent)
+
+fb_inactive = sum(variants_fb_inactive$type == "transmitted")/nrow(variants_fb_inactive)
+fb_inactive_se = sqrt(fb_inactive*(1-fb_inactive)/nrow(variants_fb_inactive))
+
+enhancer = sum(variants_enhancers$type == "transmitted")/nrow(variants_enhancers)
+enhancer_se = sqrt(enhancer*(1-enhancer)/nrow(variants_enhancers))
+
+introns = sum(variants_introns$type == "transmitted")/nrow(variants_introns)
+introns_se = sqrt(introns*(1-introns)/nrow(variants_introns))
+
+heart = sum(variants_heart$type == "transmitted")/nrow(variants_heart)
+heart_se = sqrt(heart*(1-heart)/nrow(variants_heart))
+
+syn = sum(synonymous$type == "transmitted")/nrow(synonymous)
+syn_se = sqrt(syn*(1-syn)/nrow(synonymous))
+
+mis = sum(missense$type == "transmitted")/nrow(missense)
+mis_se = sqrt(mis*(1-mis)/nrow(missense))
+
+sg = sum(stop_gained$type == "transmitted")/nrow(stop_gained)
+sg_se = sqrt(sg*(1-sg)/nrow(stop_gained))
+
+mis_ddg2p = sum(missense_ddg2p_mono_lof$type == "transmitted")/nrow(missense_ddg2p_mono_lof)
+mis_ddg2p_se = sqrt(mis_ddg2p*(1-mis_ddg2p)/nrow(missense_ddg2p_mono_lof))
+
+sg_ddg2p = sum(sg_ddg2p_mono_lof$type == "transmitted")/nrow(sg_ddg2p_mono_lof)
+sg_ddg2p_se = sqrt(sg_ddg2p*(1-sg_ddg2p)/nrow(sg_ddg2p_mono_lof))
+
+
+df = data.frame(transmission = c(fb_active, fb_inactive, enhancer, heart, introns, syn, mis, sg), se = c(fb_active_se, fb_inactive_se, enhancer_se, heart_se, introns_se, syn_se, mis_se, sg_se), set = c("Fetal Brain Active (Conserved)", "Fetal Brain Inactive (Conserved)", "VISTA Enhancers", "Heart Enhancers", "Introns", "Synonymous", "Missense", "Stop-Gained"))
+
+library(ggplot2)
+
+ggplot(df, aes(set, transmission)) + geom_pointrange(aes(ymin = transmission - 1.96*se, ymax = transmission + 1.96*se)) + coord_flip() + theme_bw(base_size = 18) + theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+    theme(legend.title = element_blank()) + ylab("Proportion Transmitted") + xlab("") + geom_hline(yintercept = 0.5, linetype = 2)
+
+
+```

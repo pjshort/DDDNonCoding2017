@@ -1,0 +1,90 @@
+---
+title: "Figure S8 - Transcription Factor Binding Analysis"
+author: "Patrick Short"
+date: "1 March 2017"
+output: html_document
+---
+
+First, we compared the fetal brain active and inactive conserved elements using AME (analysis of motif enrichment) to look for transcription factor binding motifs that are enriched in the fetal brain active elements. Now, we can scan the observed de novo mutations against this set of motifs and look for mutations predicted to disrupt binding or create de novo binding sites. We can compare this against simulated data to search for individual disruptions that may be enriched in our sample.
+
+DNMs were analyzed with DenovoTF using JASPAR PWMs to predict TF binding impact (see methods):
+
+```{r load TF binding results}
+source("../R/annotation_tools.R")
+library(stringr)
+
+# observed and simulated DNMs run through same TF binding prediction pipeline
+obs_tf = read.table("../data/de_novos.ddd_8k.noncoding_analysis_regions_only.8August2016.denovoTF.txt", header = TRUE, sep = "\t")
+sim_tf = read.table("../data/noncoding_8August2018_sim.denovoTF.txt", header = TRUE, sep = "\t")
+
+blacklist = read.table("../data/all_stable_blacklist.txt", header = FALSE, sep = "\t")$V1
+
+# remove blacklisted
+obs_tf = subset(obs_tf, !(person_stable_id %in% blacklist))
+
+#library(stringr)
+sim_tf$id_number = as.numeric(str_split_fixed(sim_tf$person_stable_id, "\\.", 4)[,2])
+sim_tf = subset(sim_tf, id_number <= (max(sim_tf$id_number) - length(unique(blacklist))))
+
+diagnosed = read.table("../data/ddd_8k.diagnosed.2016-06-23.txt", header = TRUE, sep = "\t")
+diagnosed = subset(diagnosed, !(person_id %in% blacklist))
+diagnosed_sim_ids = seq(1, length(unique(diagnosed$person_id)))
+
+obs_tf = subset(obs_tf, !(person_stable_id %in% diagnosed$person_id))
+sim_tf = subset(sim_tf, !(id_number %in% diagnosed_sim_ids))
+
+```
+
+Number of loss of binding and gain of binding (observed v simulated) in conserved fb active:
+
+```{r analyze distribution of LOB/GOB}
+conserved = read.table("../data/conserved_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+enhancers = read.table("../data/enhancer_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+heart = read.table("~/phd/code/de_novo_noncoding/data/heart_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+conserved_fb_active = read.table("../data/conserved_elements.min10_coverage.fb_active_roadmap_union.txt", header = TRUE, sep = "\t")
+conserved_fb_inactive = read.table("../data/conserved_elements.min10_coverage.fb_quiescent_roadmap_union.txt", header = TRUE, sep = "\t")
+
+o = filter_with_bed(obs_tf, conserved_fb_active)
+s = filter_with_bed(sim_tf, conserved_fb_active)
+
+source("../R/visualization.R")
+
+sim_hist(counts = sapply(split(s, s$iteration), function(df) sum(df$diff < 0)), sum(o$diff < 0), main = "Loss of Binding", bin_width = 3)
+sim_hist(counts = sapply(split(s, s$iteration), function(df) sum(df$diff > 0)), sum(o$diff > 0), main = "Gain of Binding", bin_width = 3)
+sim_hist(counts = sapply(split(s, s$iteration), function(df) sum(df$diff == 0)), sum(o$diff == 0), main = "No Change in Binding")
+
+
+```
+
+Recurrently mutated elements:
+
+```{r recurrently mutated elements}
+
+o = filter_with_bed(obs_tf, conserved_fb_active)
+s = filter_with_bed(sim_tf, conserved_fb_active)
+
+o$region_id = get_region_id(o, conserved)
+s$region_id = get_region_id(s, conserved)
+
+s = subset(s, tfbs_name %in% cortex_expressed)
+o = subset(o, tfbs_name %in% cortex_expressed)
+
+count_recurrent <- function(df) {
+  c = sapply(split(df, df$region_id), function(df) length(unique(df$person_stable_id)))
+  return(sum(c > 1))
+}
+
+
+obs_count = count_recurrent(o)
+
+s$id = paste0(s$region_id, ".", s$iteration)
+s$person_stable_id = as.character(s$person_stable_id)
+
+sim_counts = ddply(s, c("iteration", "region_id"), function(df) length(unique(df$person_stable_id)))
+sim_counts = ddply(sim_counts, "iteration", function(df) as.numeric(sum(df$V1 > 1)))$V1
+
+sim_hist(sim_counts, obs_count, xlab = "Elements with Multiple TFBS Disruptions", main = "Recurrent Elements with TF Disruption")
+
+```
+
+

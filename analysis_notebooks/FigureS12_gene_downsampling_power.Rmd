@@ -1,0 +1,131 @@
+---
+title: "Figure S12 - Downsampling Gene Length and Implications on Power"
+author: "Patrick Short"
+date: "1 March 2017"
+output: html_document
+---
+
+We find that the number of loss of function sites in non-coding elements must be less than coding elements. This has implications for discovering non-coding elements with de novo mutations contributing to disease (due to lower power to implicate an element). We have observed that the protein coding genes discovered with 4,000 trios are biased toward longer genes when compared to all coding regions and known monoallelic developmental disorder genes (DDG2P gene set).
+
+By downsampling the coding regions, we can simulate the number of genes we would successfully discover at genome-wide significance and compare this to the number of non-coding elements we see at the same length (approx 600bp).
+
+As we are unable to identify the true LOF sites in noncoding regions, we will also calculate significance in the coding regions without regard to consequence (in the 4k paper, consequence-specific mutation rates are used).
+
+```{r write function to test}
+source('../R/annotation_tools.R')
+library(plyr)
+
+test_coding = function(elements, de_novos) {
+  
+  n_probands = 4293
+  
+  dn = filter_with_bed(de_novos, elements)
+  dn$gene = get_gene(dn, elements)
+  
+  elements$counts = sapply(elements$gene, function(g) sum(dn$gene == g))
+
+  gene_counts = ddply(elements, "gene", function(df) data.frame(mu_snp = sum(df$p_snp_null), n = sum(dn$gene %in% df$gene[1]), bp = sum(df$stop - df$start)))
+  
+  gene_counts$p_val = ppois(gene_counts$n - 1, lambda = gene_counts$mu_snp*n_probands, lower.tail = FALSE)  # no cancellation
+  
+  gene_counts$signif = gene_counts$p_val < 0.05/length(unique(elements$gene))
+  
+  return(gene_counts)
+  
+}
+
+# load DNMs and exons/transcripts to test
+coding_region_dns = read.table("../data/de_novo_snps.gencode.v19.CDS.probe_overlap.txt", header = TRUE, sep = "\t")
+coding_elements = read.table("../data/gencode.v19.CDS.probe_overlap.min10_coverage.txt", header = TRUE, sep = "\t")
+ddg2p = read.table("../data/DDG2P_freeze_with_gencode19_genomic_coordinates_20141118_fixed.txt", header = TRUE, sep = "\t")
+ddg2p = subset(ddg2p, Allelic_requirement %in% c("Monoallelic", "Both"))$gencode_gene_name
+
+ddg2p_coding = subset(coding_elements, gene %in% ddg2p)
+ddg2p_coding$gene = factor(ddg2p_coding$gene, unique(ddg2p_coding$gene))
+
+gene_split = split(ddg2p_coding, ddg2p_coding$gene)
+
+test_length = function(gene_split, fraction) {
+  coding_subset = sapply(gene_split, function(df) df[sample(seq(nrow(df)), round(fraction*nrow(df))),], simplify = FALSE)
+  median_length = median(sapply(coding_subset, function(g) sum(g$stop - g$start)))
+  coding_subset = do.call(rbind, coding_subset)
+  
+  gc = test_coding(coding_subset, coding_region_dns)
+  return(data.frame(discovered = sum(gc$signif), median_length = median_length, fraction = fraction))
+}
+
+
+# actual number of genes discovered
+ddd4k_gene_count = 94
+
+# downsample gene length
+out = sapply(rep(seq(0,1,0.1), 10), function(i) test_length(gene_split, i), simplify = FALSE)
+estimates = do.call(rbind, out)
+
+# calculate the proportion still discovered after downsampling
+estimates$prop_discovered = estimates$discovered/ddd4k_gene_count
+
+e = ddply(estimates, "fraction", function(df) data.frame(median_length = mean(df$median_length), prop_discovered = mean(df$prop_discovered), pd_sd = sd(df$prop_discovered)))
+
+limits = aes(ymin = e$prop_discovered - e$pd_sd, ymax = e$prop_discovered + e$pd_sd)
+ggplot(e, aes(median_length, prop_discovered)) + geom_pointrange(limits) + stat_smooth(method = 'loess', se = FALSE, col = "black") +
+  theme_bw(base_size = 18) + xlab("Median Length of Genes After Downsampling (bp)") + ylab("Proportion of True Positive Genes Discovered") +
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) +
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank()) + 
+  scale_y_continuous(breaks = seq(0,1,0.2), labels = seq(0,1,0.2)) + ylim(c(0,1))
+
+```
+
+Raw figure was edited in Adobe Illustrator to add arrows and annotations.
+
+Part B, calculating the theoretical power given that no annotation (e.g. VEP) exists and using non-coding elements (median 600bp).
+
+Generate our power to detect true disease associations given different LOF densities.
+
+```{r power calculations}
+
+conserved_fb_active = read.table('../data/conserved_elements.min10_coverage.fb_active_roadmap_union.txt', header = TRUE, sep = "\t")
+
+prevalence<-1/120 # enrichment of LoF mutations in DD genes
+penetrance<-1 # penetrance of LoF mutations, to allow estimate of frequency of LoF mutations in cohort
+num.trios<-seq(1000,12e3,1e3)
+recurr=seq(2,6)
+num.transmissions<-num.trios*2
+thresh<-0.05/nrow(conserved_fb_active) # bonferroni p value required to detect significantly mutated gene
+max.DNMs<-30 # max number of DNMs to consider
+
+
+# for the noncoding elements, need to reflect that we cannot identify putative LOF variants
+layout(t(c(1,2)))
+idx = 1
+element.store<-matrix(nrow=nrow(conserved_fb_active), ncol=length(num.trios))
+
+for (lof_density in c(0.08, 0.02)) {
+
+  lof.rate = conserved_fb_active$p_snp_null * lof_density
+  
+  element.store<-matrix(nrow=nrow(conserved_fb_active), ncol=length(num.trios))
+  
+  for(i in seq(1,length(num.trios))) { # loop for different numbers of trios
+  
+  	for(j in seq(1,nrow(conserved_fb_active))) { 	# loop for each element
+  
+  		# how many DNMs needed to meet significance threshold given this number of trios in this gene
+  		min.hits<-min(which(ppois(0:max.DNMs, conserved_fb_active$p_snp_null[j]*num.trios[i]*2, lower.tail=F)<thresh))
+  		
+  		# how likely to see this minimum number of DNMs
+  		element.store[j,i]<-ppois(min.hits-1, (1 - lof_density) * conserved_fb_active$p_snp_null[j] * 2 + lof.rate[j]*num.trios[i]*2/prevalence*penetrance, lower.tail=F)
+  		
+  	}
+  	
+  }	
+  
+  idx = idx + 1
+  
+  # boxplot of the same
+  boxplot(na.omit(element.store[,1]), na.omit(element.store[,2]), na.omit(element.store[,3]),na.omit(element.store[,4]),na.omit(element.store[,5]),na.omit(element.store[,6]),na.omit(element.store[,7]),na.omit(element.store[,8]),na.omit(element.store[,9]),na.omit(element.store[,10]), na.omit(element.store[,11]), na.omit(element.store[,12]), col="grey", outline=F, xlab="000's of trios", ylab="\npower to detect disease-associated elements", names=seq(1,12,1), main = sprintf("Pathogenic Mutation Density: %s", as.character(lof_density)), ylim = c(0,1))
+}
+
+
+```

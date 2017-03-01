@@ -1,0 +1,526 @@
+---
+title: "Gene Target Prediction"
+author: "Patrick Short"
+date: "13 December 2016"
+output: html_document
+---
+
+Hi-C data from Dan Geschwind's group can be used to predict gene target (if any) for the set of non-coding elements included in our analysis.
+
+```{r create the set to send to Dan and Hyejung}
+source("../R/annotation_tools.R")
+
+# sending the elements to Geschwind group
+#conserved = read.table("../data/conserved_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+#enhancers = read.table("../data/enhancer_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+#heart = read.table("~/phd/code/de_novo_noncoding/data/heart_elements.min10_coverage.txt", header = TRUE, sep = "\t")
+#conserved_fb_active = read.table("../data/conserved_elements.min10_coverage.fb_active_roadmap_union.txt", header = TRUE, sep = "\t")
+
+#all_elements = rbind(conserved, enhancers, heart)
+
+#write.table(all_elements[,c("chr", "start", "stop")], file = "ddd_noncoding_set_for_Geschwind_group.bed", col.names = FALSE, row.names = FALSE, quote = FALSE, sep = "\t")
+
+all_elements = read.table("../data/DDD_interacting_genes_from_Hyejung.txt", header = TRUE, sep = "\t")
+conserved_fb_active = read.table("../data/conserved_elements.min10_coverage.fb_active_roadmap_union.txt", header = TRUE, sep = "\t")
+conserved_fb_inactive = read.table("../data/conserved_elements.min10_coverage.fb_quiescent_roadmap_union.txt", header = TRUE, sep = "\t")
+
+conserved_fb_active = merge(conserved_fb_active, all_elements)
+conserved_fb_inactive = merge(conserved_fb_inactive, all_elements)
+enhancers = merge(all_elements, enhancers)
+heart = merge(all_elements, heart)
+conserved = merge(all_elements, conserved)
+conserved$region_id = paste0(conserved$chr, ":", conserved$start, "-", conserved$stop)
+
+```
+
+```{r load DNMs}
+
+obs = read.table("../data/de_novos.ddd_8k.noncoding_included.2016-06-23.txt", header = TRUE, sep = "\t")
+obs = subset(obs, nchar(as.character(ref)) == 1 & nchar(as.character(alt)) == 1)
+obs = subset(obs, pp_dnm > 0.00781)
+
+blacklist = read.table("../data/all_stable_id_blacklist", header = FALSE, sep = "\t")
+blacklist_kinship = read.table("../data/8K_kinship_blacklist.txt", header = FALSE, sep = "\t")
+blacklist = unique(c(as.character(blacklist$V1), as.character(blacklist_kinship$V1)))
+
+obs = subset(obs, !(person_stable_id %in% blacklist))
+
+diagnosed = read.table("../data/ddd_8k.diagnosed.2016-06-23.txt", header = TRUE, sep = "\t")
+diagnosed = subset(diagnosed, !(person_id %in% blacklist))
+diagnosed_sim_ids = seq(1, length(unique(diagnosed$person_id)))
+obs_diagnosed = subset(obs, person_stable_id %in% diagnosed$person_id)
+obs_undiagnosed = subset(obs, !(person_stable_id %in% diagnosed$person_id))
+
+# load the file indicating whether proband has neurodev disorder (also used to get number of probands on blacklist)
+has_neurodev = read.table("../data/ddd_8k_probands.neurodev_terms.txt", header = TRUE, sep = "\t")
+has_neurodev$has_neurodev_phenotype = ifelse(has_neurodev$has_neurodev_phenotype == "True", TRUE, FALSE)
+n_children_removed = sum(has_neurodev$person_stable_id %in% blacklist)
+has_neurodev = subset(has_neurodev, !(person_stable_id %in% blacklist))
+has_neurodev$diagnosed = has_neurodev$person_stable_id %in% diagnosed$person_id
+
+# simulated data with DNase hypersensitivity annotations
+sim = read.table("../data/noncoding_sim.1k_runs.8k.8August2016.txt", header = TRUE, sep = "\t")
+sim$id_number = as.numeric(str_split_fixed(sim$person_stable_id, "\\.", 4)[,2])
+sim = subset(sim, id_number <= (7952 - n_children_removed))
+
+sim_diagnosed = subset(sim, id_number %in% diagnosed_sim_ids)
+sim_undiagnosed = subset(sim, !(id_number %in% diagnosed_sim_ids))
+
+obs = filter_with_bed(obs_undiagnosed, conserved)
+obs$region_id = get_region_id(obs, conserved)
+
+sim = filter_with_bed(sim_undiagnosed, conserved)
+sim$region_id = get_region_id(sim, conserved)
+
+```
+
+Merge the predicted genes from two different fetal brain regions:
+
+```{r add target genes}
+
+library(stringr)
+
+target_gene_union = function(target1, target2) {
+  
+  target1_split = mapply(function(t1,t2) unique(c(t1,t2)), str_split(target1, ","), str_split(target2, ","))
+  
+}
+
+
+obs$GZ_gene = as.character(conserved$GZ_gene[match(obs$region_id, conserved$region_id)])
+obs$CP_gene = as.character(conserved$CP_gene[match(obs$region_id, conserved$region_id)])
+
+sim$GZ_gene = as.character(conserved$GZ_gene[match(sim$region_id, conserved$region_id)])
+sim$CP_gene = as.character(conserved$CP_gene[match(sim$region_id, conserved$region_id)])
+
+obs$hi_c = sapply(mapply(function(t1,t2) unique(c(t1,t2)), str_split(obs$GZ_gene, ","), str_split(obs$CP_gene, ",")), function(t) paste0(t, collapse = ","))
+obs$hi_c[obs$hi_c == "NA"] = "NONE"
+obs$hi_c = str_replace(obs$hi_c, "^NA,", "")
+obs$hi_c = str_replace(obs$hi_c, ",NA$", "")
+
+
+sim$hi_c = sapply(mapply(function(t1,t2) unique(c(t1,t2)), str_split(sim$GZ_gene, ","), str_split(sim$CP_gene, ",")), function(t) paste0(t, collapse = ","))
+sim$hi_c[sim$hi_c == "NA"] = "NONE"
+sim$hi_c = str_replace(sim$hi_c, "^NA,", "")
+sim$hi_c = str_replace(sim$hi_c, ",NA$", "")
+
+
+```
+
+Test the proportion of elements with DNMs interacting with known DD gene or other gene sets and compare to the full set of elements:
+
+```{r test overlap with known pli or DD}
+
+check_genelist_overlap <- function(target_genes, gene_list) {
+  
+  targets = unlist(str_split(target_genes, ","))
+  
+  return(any(targets %in% gene_list))
+  
+}
+
+target_to_gene_list_df <- function(obs, sim, element_set, target_factor) {
+  
+  # returns overlap with DDG2P and LoF-constrained sets
+  
+  o = filter_with_bed(obs, element_set)
+  s = filter_with_bed(sim, element_set)
+  
+  o$ddg2p = sapply(o[, target_factor], function(t) check_genelist_overlap(t, ddg2p))
+  s$ddg2p = sapply(s[, target_factor], function(t) check_genelist_overlap(t, ddg2p))
+  
+  o$lof_constrained = sapply(o[, target_factor], function(t) check_genelist_overlap(t, lof_constrained))
+  s$lof_constrained = sapply(s[, target_factor], function(t) check_genelist_overlap(t, lof_constrained))
+  
+  o$cortex_active = sapply(o[, target_factor], function(t) check_genelist_overlap(t, ctx_expressed))
+  s$cortex_active = sapply(s[, target_factor], function(t) check_genelist_overlap(t, ctx_expressed))
+  
+  o$brain_enriched = sapply(o[, target_factor], function(t) check_genelist_overlap(t, brain_enriched))
+  s$brain_enriched = sapply(s[, target_factor], function(t) check_genelist_overlap(t, brain_enriched))
+  
+  df = data.frame(predicted_contact = c(sum(o$ddg2p)/nrow(o), sum(s$ddg2p)/nrow(s), sum(o$lof_constrained)/nrow(o), sum(s$lof_constrained)/nrow(s), sum(o$cortex_active)/nrow(o), sum(s$cortex_active)/nrow(s), sum(o$brain_enriched)/nrow(o), sum(s$brain_enriched)/nrow(s)), n = c(nrow(o), nrow(element_set), nrow(o), nrow(element_set), nrow(o), nrow(element_set), nrow(o), nrow(element_set)), gene_set = c("DDG2P", "DDG2P", "LoF-constrained", "LoF-constrained", "Cortex Expressed", "Cortex Expressed", "Brain Enriched", "Brain Enriched"), obs = c("elements w/ DNMs", "all elements", "elements w/ DNMs", "all elements", "elements w/ DNMs", "all elements", "elements w/ DNMs", "all elements"))
+}
+
+gencode = read.table("../data/gencode_protein_coding_genes_v19_+strand.txt", header = TRUE, sep = "\t")
+
+ddg2p = read.table("../data/DDG2P_freeze_with_gencode19_genomic_coordinates_20141118_fixed.txt", header = TRUE, sep = "\t")
+ddg2p = subset(ddg2p, Allelic_requirement %in% c("Monoallelic", "Both"))$gencode_gene_name
+
+exac_pli = read.table("../data/exac_pLI.txt", header = TRUE, sep = "\t")
+lof_constrained = exac_pli$gene[exac_pli$pLI > 0.9]
+
+# cortex expressed
+ctx_expressed = read.table("../data/background_HumanCtx_Expressed.csv", header = TRUE, sep = ",")
+colnames(ctx_expressed) = c("id", "transcript_id")
+
+ctx_expressed$gene = gencode$gene[match(ctx_expressed$transcript_id, str_split_fixed(as.character(gencode$transcript_id), "\\.", 2)[,1])]
+ctx_expressed = as.character(ctx_expressed$gene)
+
+brain_enriched = read.table("../data/BrainExpressed_GTex.csv", header = FALSE, sep = ",")
+brain_enriched = as.character(brain_enriched$V1)
+brain_enriched = gencode$gene[match(brain_enriched, str_split_fixed(as.character(gencode$transcript_id), "\\.", 2)[,1])]
+brain_enriched = brain_enriched[!is.na(brain_enriched)]
+
+hic_fb_active = target_to_gene_list_df(obs, sim, conserved_fb_active, "hi_c")
+hic_fb_active$element_set = "Conserved Fetal Brain Active"
+hic_fb_active$target_prediction = "Fetal Brain Hi-C"
+
+hic_fb_inactive = target_to_gene_list_df(obs, sim, conserved_fb_inactive, "hi_c")
+hic_fb_inactive$element_set = "Conserved Fetal Brain Inactive"
+hic_fb_inactive$target_prediction = "Fetal Brain Hi-C"
+
+```
+
+Hi-C is the only cell type specific method of predicting the gene target. Compare the targets of fetal brain active conserved elements vs. inactive elements:
+
+```{r plot the hi-c results}
+library(ggplot2)
+
+df = rbind(hic_fb_inactive, hic_fb_active)
+df$se = mapply(function(p,n) sqrt(p*(1-p)/n), df$predicted_contact, df$n)
+
+df$obs = factor(df$obs, levels = c("all elements", "elements w/ DNMs"), ordered = TRUE)
+
+ctx_expressed_df = subset(df, gene_set == "Cortex Expressed")
+limits = aes(ymin = ctx_expressed_df$predicted_contact - 1.96*ctx_expressed_df$se, ymax = ctx_expressed_df$predicted_contact + 1.96*ctx_expressed_df$se)
+ggplot(ctx_expressed_df, aes(element_set, predicted_contact, color = obs)) + coord_flip() +
+  geom_pointrange(limits, size = 1.25, position = position_dodge(width = 0.1)) +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank()) + ylab("\nProportion of Elements Predicted to Regulate Cortex-Expressed Gene") + xlab("") + ggtitle("Fetal Brain Hi-C") + ylim(0,0.4)
+
+brain_enriched_df = subset(df, gene_set == "Brain Enriched")
+limits = aes(ymin = brain_enriched_df$predicted_contact - 1.96*brain_enriched_df$se, ymax = brain_enriched_df$predicted_contact + 1.96*brain_enriched_df$se)
+ggplot(brain_enriched_df, aes(element_set, predicted_contact, color = obs)) + coord_flip() +
+  geom_pointrange(limits, size = 1.25, position = position_dodge(width = 0.1)) +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank()) + ylab("\nProportion of Elements Predicted to Genes with Enriched Expression in Brain") + xlab("") + ggtitle("Fetal Brain Hi-C") + ylim(0,0.3)
+
+lof_constrained_df = subset(df, gene_set == "LoF-constrained")
+limits = aes(ymin = lof_constrained_df$predicted_contact - 1.96*lof_constrained_df$se, ymax = lof_constrained_df$predicted_contact + 1.96*lof_constrained_df$se)
+ggplot(lof_constrained_df, aes(element_set, predicted_contact, color = obs)) + coord_flip() +
+  geom_pointrange(limits, size = 1.25, position = position_dodge(width = 0.1)) +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank()) + ylab("\nProportion of Elements Predicted to Regulate LoF-constrained Gene") + xlab("") + ggtitle("Fetal Brain Hi-C") + ylim(0, 0.2)
+
+ddg2p_df = subset(df, gene_set == "DDG2P")
+limits = aes(ymin = ddg2p_df$predicted_contact - 1.96*ddg2p_df$se, ymax = ddg2p_df$predicted_contact + 1.96*ddg2p_df$se)
+ggplot(ddg2p_df ,aes(element_set, predicted_contact, color = obs)) + coord_flip() +
+  geom_pointrange(limits, size = 1.25, position = position_dodge(width = 0.1)) +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank()) + ylab("\nProportion of Elements Predicted to Regulate DDG2P Gene") + xlab("") + 
+  ggtitle("Fetal Brain Hi-C") + ylim(0, 0.12)
+
+```
+
+DHS to RNA-seq correlation.
+
+The data is a matrix of p-values with regulatory elements/clusters as rows and genes as columns. We can trim the matrices down by focusing only on the conserved elements we have assayed in DDD. For the first analysis, we will consider all interactions below a certain p-value cutoff as real and set to 1, setting all others to 0. There are some major issues with this method - namely that it is very difficult to estimate the false discovery rate (FDR) for this set of highly correlated p-values (from wilcoxon rank sum test, see methods of Shoostari et. al 2016).
+
+```{r process shooshtari 2016 data}
+library(GenomicRanges)
+library(reshape2)
+library(stringr)
+
+pval_min = 0.1 # minimum level for considering an element-gene relationship to be genuine - not clear what FDR for this analysis is
+
+dhs_targets = function(pval_matrix, elements) {
+  
+  e = GRanges(seqnames = Rle(elements$chr), ranges = IRanges(start = elements$start, end = elements$stop))
+  
+  # boom
+  c [is.na(pval_matrix)] = 0
+  pval_matrix[pval_matrix > pval_min] = 0
+  pval_matrix[pval_matrix == 0] = NA
+  
+  # make it sparse (store element to gene target pair)
+  pval_sparse = melt(pval_matrix, na.rm = TRUE)
+  colnames(pval_sparse) = c("element_string", "gene_string", "pval")
+  
+  pval_sparse$chr = str_split_fixed(pval_sparse$element_string, "-", 3)[,1]
+  pval_sparse$start = as.numeric(str_split_fixed(pval_sparse$element_string, "-", 3)[,2])
+  pval_sparse$stop = as.numeric(str_split_fixed(pval_sparse$element_string, "-", 3)[,3])
+  pval_sparse$gene = str_split_fixed(pval_sparse$gene_string, "-", 3)[,3]
+
+  # use GenomicRanges to only keep rows that overlap with elements assayed
+  p = GRanges(seqnames = Rle(pval_sparse$chr), ranges = IRanges(start = pval_sparse$start, end = pval_sparse$stop))
+  
+  covered = findOverlaps(p, e)
+
+  e = elements[subjectHits(covered),]
+  
+  e$DHS_gene = pval_sparse[queryHits(covered),"gene"]
+  e$DHS_pval = pval_sparse[queryHits(covered),"pval"]
+  
+  # restrict to gene start w/in 1Mb
+  e$distance_to_gene = abs((e$start + e$stop)/2 - gencode$start[match(e$DHS_gene, gencode$gene)])
+  e$distance_to_gene[is.na(e$distance_to_gene)] = 1e9
+  e = subset(e, distance_to_gene < 2e6)
+  
+  return(e)
+  
+}
+
+conserved_with_dhs_prediction = vector("list", 22)
+elements = rbind(conserved_fb_active, conserved_fb_inactive)
+
+for (c in seq(1,22)) {
+  print(sprintf("Loading Chromosome %i", c))
+  load(sprintf('../data/ShoostariCorrelation/Crr-pval-mat-chr%i.Rdata', c))
+  conserved_with_dhs_prediction[[c]] = dhs_targets(chr.crr.pval.mat, elements)
+}
+
+conserved_with_dhs_prediction = do.call(rbind, conserved_with_dhs_prediction)
+conserved_with_dhs_prediction$region_id = paste0(conserved_with_dhs_prediction$chr, ":", conserved_with_dhs_prediction$start, "-", conserved_with_dhs_prediction$stop)
+
+
+collapse_dhs_genes <- function(df) {
+  if (nrow(df) > 1) {
+    return(data.frame(DHS_genes = paste0(df$DHS_gene, collapse = ",")))
+  } else {
+    return(data.frame(DHS_genes = df$DHS_gene))
+    }
+}
+
+region_to_dhs_gene = ddply(conserved_with_dhs_prediction, "region_id", collapse_dhs_genes)
+
+obs$DHS_gene = as.character(region_to_dhs_gene$DHS_genes[match(obs$region_id, region_to_dhs_gene$region_id)])
+obs$DHS_gene[is.na(obs$DHS_gene)] = "NONE"
+sim$DHS_gene = as.character(region_to_dhs_gene$DHS_genes[match(sim$region_id, region_to_dhs_gene$region_id)])
+sim$DHS_gene[is.na(sim$DHS_gene)] = "NONE"
+
+DHS_fb_active = target_to_gene_list_df(obs, sim, conserved_fb_active, "DHS_gene")
+DHS_fb_active$element_set = "Conserved Fetal Brain Active"
+DHS_fb_active$target_prediction = "DHS"
+
+DHS_fb_inactive = target_to_gene_list_df(obs, sim, conserved_fb_inactive, "DHS_gene")
+DHS_fb_inactive$element_set = "Conserved Fetal Brain Inactive"
+DHS_fb_inactive$target_prediction = "DHS"
+
+```
+
+Using the method of conserved synteny:
+
+```{r syntenic gene prediction}
+
+library(GenomicRanges)
+
+# data kindly provided by Hugues Roest Croellius
+CREs = read.table("../data/CREs_intersect_REG.list", header = TRUE, sep = "\t")
+
+CREs$Start.hg19.6. = mapply(max,CREs$CREs_start.2., CREs$Start.hg19.6.)
+CREs$End.hg19.7. = mapply(min, CREs$CREs_end.3., CREs$End.hg19.7.)
+
+c = GRanges(seqnames=Rle(CREs$Chromosome.5.), ranges = IRanges(start = CREs$Start.hg19.6., end = CREs$End.hg19.7.), gene = CREs$Predicted.target.20.)
+c = unique(c) # a few repeats where large syntenic block overlaps multiple of our targeted sequences
+
+d = GRanges(seqnames=Rle(obs$chr), ranges = IRanges(start = obs$pos, end = obs$pos))
+hits = findOverlaps(d,c)
+
+obs$syntenic_gene= "NONE"
+obs$syntenic_gene[queryHits(hits)] = as.character(mcols(c)$gene[subjectHits(hits)])
+obs$syntenic_gene = gsub(" $", "", obs$syntenic_gene)  # remove trailing space
+obs$syntenic_gene[obs$syntenic_gene == "-"] = "NONE"
+obs$syntenic_gene = str_replace(obs$syntenic_gene, " ", ",")
+
+d = GRanges(seqnames=Rle(sim$chr), ranges = IRanges(start = sim$pos, end = sim$pos))
+hits = findOverlaps(d,c)
+
+sim$syntenic_gene= "NONE"
+sim$syntenic_gene[queryHits(hits)] = as.character(mcols(c)$gene[subjectHits(hits)])
+sim$syntenic_gene = gsub(" $", "", sim$syntenic_gene)  # remove trailing space
+sim$syntenic_gene[sim$syntenic_gene == "-"] = "NONE"
+sim$syntenic_gene = str_replace(sim$syntenic_gene, " ", ",")
+
+```
+
+```{r closest gene}
+
+obs$closest_gene = get_element_closest_gene(obs, gencode = gencode)
+sim$closest_gene = get_element_closest_gene(sim, gencode = gencode)
+
+closest_gene_fb_active = target_to_gene_list_df(obs, sim, conserved_fb_active, "closest_gene")
+closest_gene_fb_active$element_set = "Conserved Fetal Brain Active"
+closest_gene_fb_active$target_prediction = "closest_gene"
+
+closest_gene_fb_inactive = target_to_gene_list_df(obs, sim, conserved_fb_inactive, "closest_gene")
+closest_gene_fb_inactive$element_set = "Conserved Fetal Brain Inactive"
+closest_gene_fb_inactive$target_prediction = "closest_gene"
+
+```
+
+Plot the proportion of elements that receive a prediction under each method:
+
+```{r proportion of elements with prediction}
+
+fba = filter_with_bed(obs, conserved_fb_active)
+fbi = filter_with_bed(obs, conserved_fb_inactive)
+
+df = data.frame(prop_predicted = c(sum(fba$hi_c != "NONE")/nrow(fba),sum(fba$DHS_gene != "NONE")/nrow(fba), sum(fba$syntenic_gene != "NONE")/nrow(fba), sum(fba$closest_gene != "NONE")/nrow(fba), sum(fbi$hi_c != "NONE")/nrow(fbi), sum(fbi$DHS_gene != "NONE")/nrow(fbi), sum(fbi$syntenic_gene != "NONE")/nrow(fbi), sum(fbi$closest_gene != "NONE")/nrow(fbi)), element_set = rep(c("Fetal Brain Active", "Fetal Brain Inactive"), each = 4), prediction_method = rep(c("Fetal Brain Hi-C", "DHS", "Synteny", "Closest Gene"), 2))
+
+df$prediction_method = factor(df$prediction_method, levels = c("Fetal Brain Hi-C", "DHS", "Synteny", "Closest Gene"), ordered = TRUE)
+
+ggplot(df) + geom_bar(aes(prediction_method, prop_predicted, fill = element_set), position= position_dodge(), stat = "identity") + coord_flip() +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank()) + ylab("Proportion of Elements with Predicted Target") + xlab("Prediction Method")
+
+```
+
+Number of predictions per element:
+
+```{r predictions per element}
+fba = filter_with_bed(subset(sim, iteration <= 100), conserved_fb_active)
+fbi = filter_with_bed(subset(sim, iteration <= 100), conserved_fb_inactive)
+
+fbi_counts = rowSums(matrix(c(fbi$hi_c != "NONE", fbi$DHS_gene != "NONE", fbi$syntenic_gene != "NONE", fbi$closest_gene != "NONE"), ncol=4))
+fbi_counts = table(fbi_counts)/length(fbi_counts)
+fba_counts = rowSums(matrix(c(fba$hi_c != "NONE", fba$DHS_gene != "NONE", fba$syntenic_gene != "NONE", fba$closest_gene != "NONE"), ncol=4))
+fba_counts = table(fba_counts)/length(fba_counts)
+
+df = data.frame(counts = rep(c(1, 2, 3, 4), 2), number_predicting = c(fba_counts, fbi_counts), element_set = c(rep("Fetal Brain Active", length(fba_counts)), rep("Fetal Brain Inactive", length(fbi_counts))))
+
+ggplot(df) + geom_bar(aes(counts, number_predicting, fill = element_set), width = 1, color = "black", stat = "identity") + facet_wrap(~element_set, ncol = 1) +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank()) + ylab("Proportion of Elements") + xlab("Number of Predictors per Element")
+
+```
+
+Number of methods arriving at the SAME prediction per element:
+
+```{r predictions per element}
+
+check_agreement <- function(genes1, genes2, genes3) {
+  genes1 = unique(unlist(str_split(genes1, ",")))
+  genes2 = unique(unlist(str_split(genes2, ",")))
+  genes3 = unique(unlist(str_split(genes3, ",")))
+
+  t = table(c(genes1, genes2, genes3))
+  t = t[names(t) != "NONE"]
+  
+  if (length(t) == 0) {
+    return(0)
+  } else if (max(t) == 1) {
+    return(0)
+  } else {
+    return(max(t))
+  }
+}
+
+fba_agreement_counts = as.numeric(mapply(check_agreement, fba$hi_c, fba$DHS_gene, fba$syntenic_gene))
+fba_agreement_counts = table(fba_agreement_counts)/length(fba_agreement_counts)
+fbi_agreement_counts = as.numeric(mapply(check_agreement, fbi$hi_c, fbi$DHS_gene, fbi$syntenic_gene))
+fbi_agreement_counts = table(fbi_agreement_counts)/length(fbi_agreement_counts)
+
+df = data.frame(counts = c("No Agreement", 2, 3), number_agreeing = as.numeric(fba_agreement_counts))
+df$counts = factor(df$counts, levels = c("No Agreement", 2, 3), ordered = TRUE)
+
+ggplot(df) + geom_bar(aes(counts, number_agreeing), color = "white", stat = "identity") +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"), strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank()) + ylab("Proportion of Elements") + xlab("Number of Predictors Agreeing") + ggtitle("Concordance Between Gene Target Predictions is Low") + theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+How frequently do these methods agree? By this we mean they identify at least one common gene target for a given element.
+
+```{r heatmap}
+library(ggplot2)
+
+methods = c("hi_c", "DHS_gene", "syntenic_gene", "closest_gene")
+
+# this comparison is only for the cases where both sets make prediction (i.e. the 'nones' are ignored)
+
+measure_overlap <- function(genes1, genes2) {
+  genes1 = unlist(str_split(genes1, ","))
+  genes2 = unlist(str_split(genes2, ","))
+
+  if ((genes1 != "NONE") & (genes2 != "NONE")) {  
+    return( any(genes1 %in% genes2) )
+  } else {
+    return( FALSE )
+  }
+}
+
+count_times_both_predict <- function(genes1, genes2) {
+
+  return((genes1 != "NONE") & (genes2 != "NONE"))
+  
+}
+
+
+
+l = vector("list", length(methods)^2)
+idx = 1
+for (i in methods){
+  idy = 1
+  for (j in methods) {
+    if (idx >= idy) {
+      print(paste(i, j))
+      print(paste(idx, idy))
+      l[[length(methods)*(idx-1) + idy]] = data.frame(method1 = i, method2 = j, overlap = sum(mapply(measure_overlap, obs[,i], obs[,j]))/sum(mapply(count_times_both_predict, obs[,i], obs[,j])))
+    } else {
+      l[[length(methods)*(idx-1) + idy]] = data.frame(method1 = i, method2 = j, overlap = NA)
+    }
+    idy = idy + 1
+  }
+  idx = idx + 1
+}
+
+df = do.call(rbind, l)
+df$method1 = factor(df$method1, levels=methods, ordered = TRUE)
+df$method2 = factor(df$method2, levels=rev(methods), ordered = TRUE)
+
+df$overlap[df$overlap == 1] = NA
+
+ggplot(df) + geom_tile(aes(method1, method2, fill = overlap), color="white", size=0.1) + scale_fill_continuous(low = "white", high = "black", na.value = 'white', limits = c(0,1)) + geom_text(aes(method1, method2, label = round(overlap,3)), size = 5) + 
+  theme_bw(base_size = 18) + ylab("") + xlab("") +
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank())
+
+```
+
+Predict gene targets using ensemble method (described in methods section of paper). We used the Genomicus, DHS, and Hi-C predictions to generate aggregated predictions which we considered ‘high confidence’ if predicted by at least two of the three methods.
+
+```{r ensemble gene target}
+
+high_confidence_gene <- function(hi_c, DHS_gene, syntenic_gene) {
+  
+  hi_c = unique(unlist(str_split(hi_c, ",")))
+  DHS_gene = unique(unlist(str_split(DHS_gene, ",")))
+  syntenic_gene = unique(unlist(str_split(syntenic_gene, ",")))
+
+  t = table(c(hi_c, DHS_gene, syntenic_gene))
+  t = t[names(t) != "NONE"]
+  
+  if (length(t) == 0) {
+    return("NONE")
+  }
+  
+  if (max(t) > 1) { # we have agreement - return this
+    consensus = paste0(names(t)[which(t == max(t))], collapse = ",")
+  } else { # no high confidence
+    consensus = "NONE"
+  }
+  
+  return(consensus)  # returns genes most agreed open (possibly multiple, if so sep by ,)
+
+}
+
+obs$high_conf = as.character(mapply(high_confidence_gene, obs$hi_c, obs$DHS_gene, obs$syntenic_gene))
+sim$high_conf = as.character(mapply(high_confidence_gene, sim$hi_c, sim$DHS_gene, sim$syntenic_gene))
+
+
+```

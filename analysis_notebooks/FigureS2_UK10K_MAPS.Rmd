@@ -1,0 +1,61 @@
+---
+title: "Figure S2 - MAPS on UK10K low-coverage whole genomes"
+author: "Patrick Short"
+date: "1 March 2017"
+output: html_document
+---
+
+Using the UK10K data, let's look at the MAPS for noncoding elements. We will look at every base on chromosome one and separate the protein coding sequence from non-coding sequence. We will exclude a 10bp buffer alongside protein coding regions to ensure non-coding regions do not contain splice sites.
+
+We will also check the VEP consequences to determine what proportion of the high-scoring non-coding sites are actually coding elements missed by gencode v19.
+
+```{r uk10k phastcons top noncoding}
+source("~/phd/code/dddMAPS/dddMAPS/MAPS.R")
+source("~/phd/code/dddMAPS/dddMAPS/MAPS_plotting_extras.R")
+
+coding_elements = read.table('../data/gencode.v19.CDS.probe_overlap.min10_coverage.txt', header = TRUE, sep = "\t")
+coding_elements_plus_buffer = coding_elements
+coding_elements_plus_buffer$start = coding_elements_plus_buffer$start - 5
+coding_elements_plus_buffer$stop = coding_elements_plus_buffer$stop + 5
+
+# if running locally, use only chr1 for RAM/speed reasons
+uk10k = read.table("../data/UK10K_COHORT.20160215.sites.chr1.VEP.CADD.tsv", header = TRUE, sep = "\t")
+uk10k_coding = filter_with_bed(uk10k, coding_elements_plus_buffer)
+uk10k_non_coding = uk10k[!(rownames(uk10k) %in% rownames(uk10k_coding)), ]
+
+uk10k_non_coding = subset(uk10k_non_coding, !(CQ %in% c("missense_variant", "stop_gained", "stop_lost", "splice_acceptor_variant", "splice_donor_variant", "start_lost", "synonymous_variant")))
+
+uk10k_non_coding$cadd_bin = cut(uk10k_non_coding$scaled_CADD, c(seq(0,30,2), 40, 50))
+uk10k_coding$cadd_bin = cut(uk10k_coding$scaled_CADD, c(seq(0,30,2), 40, 50))
+
+uk10k_synonymous = subset(uk10k_coding, CQ == "synonymous_variant")
+
+uk10k_lm = maps_fit(uk10k_synonymous)
+
+vep = ps_raw(uk10k_coding, uk10k_coding$CQ)
+c = ps_raw(uk10k_coding, uk10k_coding$cadd_bin)
+n = ps_raw(uk10k_non_coding, uk10k_non_coding$cadd_bin)
+
+v = data.frame(cadd_bin = c("Synonymous", "Missense", "Stop Gained"), maps = c(vep$ps_raw["synonymous_variant"], vep$ps_raw["missense_variant"], vep$ps_raw["stop_gained"]), se = c(vep$standard_error["synonymous_variant"], vep$standard_error["missense_variant"], vep$standard_error["stop_gained"]), set = "VEP Annotation")
+df = data.frame(cadd_bin = rep(levels(coding_vars$cadd_bin), 2), maps = c(c$ps_raw, n$ps_raw), se = c(c$standard_error, n$standard_error), set = c(rep("Coding", length(c$ps_raw)), rep("Non-Coding", length(n$ps_raw))))
+
+df = rbind(v, df)
+
+df$cadd_bin = factor(df$cadd_bin, levels = c(levels(uk10k_coding$cadd_bin), c("Synonymous", "Missense", "Stop Gained")), ordered = TRUE)
+
+limits = aes(ymin = df$maps - 1.96*df$se, ymax = df$maps + 1.96*df$se)
+
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+ggplot(df, aes(cadd_bin, maps, color = set)) +
+  geom_pointrange(limits, size = 1.25) + coord_flip() +
+  xlab("CADD Score\n") + ylab("\nProportion of Singleton (Unadjusted)") +
+  theme_bw(base_size = 18) + 
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  theme(legend.title = element_blank()) + scale_color_manual(values = cbbPalette)
+
+
+
+
+
+```

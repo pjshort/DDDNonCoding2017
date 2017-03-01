@@ -60,10 +60,6 @@ ES_derived_neuronal = c("E007", "E009", "E010")
 
 developmental = c(fetal, ES_derived_neuronal, ESC)
 
-#unaffected_parents_DHS = read.table("../data/unaffected_parent_alleles_all_chromosomes.CADD.DHS_broad_peak_fdr_0.01.AllRoadmapTissues.txt", header = TRUE, sep = "\t")
-
-#unaffected_parents_DHS = subset(unaffected_parents_DHS, nchar(as.character(unaffected_parents_DHS$ref)) == 1 & nchar(as.character(unaffected_parents_DHS$alt)) == 1)
-
 ```
 
 
