@@ -8,6 +8,8 @@ output: html_document
 Code to generate Figure 4 of the non-coding burden paper.
 
 ```{r use power calc to generate ML model}
+library(ggplot2)
+library(gridExtra)
 
 conserved_fb_active = read.table("../data/conserved_elements.min10_coverage.fb_active_roadmap_union.txt", header = TRUE, sep = "\t")
 
@@ -19,69 +21,180 @@ num.transmissions<-num.trios*2
 thresh<-0.05/nrow(conserved_fb_active) # p value required to detect significantly mutated gene
 max.DNMs<-10 # max number of DNMs to consider
 
+n_recurr = 25
+n_obs = 286 # from fetal brain active observed elements
+n_signif = 0
 
-n_lof = seq(0, 2613, 20)
-lof.multiplier = seq(0.0001,.0801, 0.0001)
+obs_vector = c(rep(0, nrow(conserved_fb_active) - 234 - 25), rep(1, 234),rep(2,23), 3, 3)
+
+total_obs = sum(obs_vector)
+total_recurr = sum(obs_vector > 1)
+total_gws = sum(obs_vector > 3)
+
+p_data_abc = function(n_true_elements, lof.density, obs_vector) {
+  
+  # simulate data
+  true_element_idx = sample(seq(1, nrow(conserved_fb_active)), n_true_elements)
+  lof.rate = conserved_fb_active$p_snp_null * lof.density
+  
+  # there are n_true_elements which will have mutations at rate
+  rate_parameter_true_elements = (lof.rate*num.trios/prevalence*penetrance + conserved_fb_active$p_snp_null*num.trios)[true_element_idx]
+  
+  # there are n - n_true elements which have mutations at rate
+  rate_parameter_false_elements = (conserved_fb_active$p_snp_null*num.trios)[-true_element_idx]
+  
+  all_elements = c(rate_parameter_true_elements, rate_parameter_false_elements)
+  
+  # probability of observing a total of n_recurr recurrently mutated elements
+  sim = sapply(all_elements, function(l) rpois(100, l))
+  
+  
+  # probability of observing total DNMs
+  total = rowSums(sim)
+  p_total = median(dpois(total, lambda = total_obs))
+  #p_total = sum((total < total_upper) & (total > total_lower))/dim(sim)[1]
+  #p_total = sum(abs(total - sum(obs_vector)) < 1.96*sqrt(total))/dim(sim)[1]
+  
+  # probability of observed recurrent DNMs
+  recurr = rowSums(sim > 1)
+  p_recurr = median(dpois(recurr, lambda = total_recurr))
+  #p_recurr = sum((recurr < recurr_upper) & (recurr > recurr_lower))/dim(sim)[1]
+    #p_recurr = sum(abs(recurr - sum(obs_vector > 1)) < 1.96*sqrt(sum(obs_vector > 1)))/dim(sim)[1]
+
+  # probability of zero with more than 3
+  gws = rowSums(sim > 3)
+  p_gws = median(dpois(gws, lambda = total_gws))
+  #p_gws = sum(gws == sum(obs_vector > 3))/dim(sim)[1]
+
+	store_likelihood[j, i] = p_total * p_recurr * p_gws
+}
+
+
+n_lof = seq(1, 2601, 20)
+lof.multiplier = seq(0.0001,.1001, 0.001)
 
 store_likelihood <-matrix(ncol=length(n_lof), nrow=length(lof.multiplier))
 colnames(store_likelihood) = n_lof
 rownames(store_likelihood) = lof.multiplier
 
-p0 <- function(power) {
-  power = power[sample(length(power), n_lof[i])]
-  d = 1 - power # probability of NOT discovering each element
-  prob_of_zero = prod(d) # probability of not discovering ANY of the elements 
-  return(prob_of_zero)
-}
-
 for(i in seq(1,length(n_lof))) {
 
 	for(j in seq(1,length(lof.multiplier))) {
 		
-	  lof.rate = conserved_fb_active$p_snp_null * lof.multiplier[j]
-	  
-	  # how many DNMs needed to meet significance threshold given this number of trios in this gene
-		min.hits <- sapply(conserved_fb_active$p_snp_null, function(l) min(which(ppois(0:max.DNMs,l*num.trios*2, lower.tail=F)<thresh)))
+	  prob_recurr = mean(replicate(30, p_data_abc(n_lof[i], lof.multiplier[j], obs_vector)))
 		
-		# how likely to see this minimum number of DNMs
-		# the expected is the mutability of the element plus the mutability of any lof sites scaled by the 'prevalence' which
-		# is the enrichment of LOF mutations in DD
-		power <- ppois(min.hits-1, lof.rate*num.trios*2/prevalence*penetrance + conserved_fb_active$p_snp_null*num.trios*2, lower.tail=F)
-		
-		prob_of_zero = median(replicate(10, p0(power))) # probability of zero elements meeting genome-wide signifiance threshold
-		
-	  store_likelihood[j, i] = prob_of_zero 
+	  store_likelihood[j, i] = prob_recurr
 		
 	}
 	
-}	
+}
 
+#store_likelihood = (1/store_likelihood)/max(1/store_likelihood)
+
+store_likelihood_bf = store_likelihood/store_likelihood[1,1]
 
 library(reshape2)
 library(ggplot2)
-m = melt(store_likelihood, varnames = c("lof.rate", "n_lof"), value.name = "probability_of_finding_zero")
+m = melt(store_likelihood_bf, varnames = c("lof.rate", "n_lof"), value.name = "probability_of_model")
 m$prop_lof = m$n_lof/max(m$n)
 
-ggplot(m) + geom_tile(aes(lof.rate, n_lof, fill = probability_of_finding_zero)) + 
-  scale_fill_gradient(low = "white", high = "blue", guide = guide_colorbar(title = "Probability of Observing\nZero Elements")) + 
-  xlab("Proportion of Mutations\nResulting in Loss of Function") + 
-  ylab("Number of Elements with\nMonoallelic Loss of Function Mechanism") +
+ggplot(m) + geom_tile(aes(lof.rate, n_lof, fill = probability_of_model)) + 
+  scale_fill_gradient(low = "white", high = "blue", guide = guide_colorbar(title = "Likelihood")) + 
+  xlab("Proportion of Mutations\nResulting in Pathogenic Loss/Gain of Function") + 
+  ylab("Number of Elements with\nMonoallelic Loss/Gain of Function Mechanism") +
   theme_bw(base_size = 18) +
   theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
   theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
 
+write.table(m, file = "../data/Figure4a_ML_model_bayes_factors.txt", col.names = TRUE, row.names = FALSE, sep = "\t", quote = FALSE)
 
-ggplot(subset(m, (lof.rate < 0.04) & (n_lof < 1000))) + geom_tile(aes(lof.rate, n_lof, fill = probability_of_finding_zero)) + 
-  scale_fill_gradient(low = "white", high = "blue", guide = guide_colorbar(title = "Probability of Observing\nZero Elements")) + 
-  xlab("Proportion of Mutations\nResulting in Loss of Function") + 
-  ylab("Number of Elements with\nMonoallelic Loss of Function Mechanism") +
+```
+
+```{r from remote}
+
+m = read.table("../data/Figure4a_ML_model_bayes_factors.txt", header = TRUE, sep = "\t")
+
+ggplot(m) + geom_tile(aes(lof.rate, n_lof, fill = probability_of_model)) +
+  scale_fill_gradient(low = "white", high = "blue", guide = guide_colorbar(title = "Likelihood")) + 
+  xlab("Proportion of Mutations\nResulting in Pathogenic Loss/Gain of Function") + 
+  ylab("Number of Elements with\nMonoallelic Loss/Gain of Function Mechanism") +
   theme_bw(base_size = 18) +
   theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
   theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+
+# let's get the 5% cutoff for prob density
+c = cumsum(m$probability_of_model[order(m$probability_of_model)])/sum(m$probability_of_model)
+
+thresh100 = 0
+thresh90 = m$probability_of_model[order(m$probability_of_model)][which.min(abs(c - 0.1))]
+thresh50 = m$probability_of_model[order(m$probability_of_model)][which.min(abs(c - 0.5))]
+
+ggplot(m) + geom_tile(aes(lof.rate, n_lof, fill = probability_of_model)) + geom_contour(aes(lof.rate, n_lof, z=probability_of_model),breaks=c(thresh90, thresh50),colour="red") +
+    scale_fill_gradient(low = "white", high = "blue", guide = guide_colorbar(title = "Likelihood Ratio")) + 
+    xlab("Proportion of Mutations\nResulting in Pathogenic Loss/Gain of Function") + 
+    ylab("Number of Elements with\nMonoallelic Loss/Gain of Function Mechanism") +
+    theme_bw(base_size = 18) +
+    theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + ylim(0, max(m$n_lof)) + xlim(0, max(m$lof.rate)) + ggtitle("")
 
 
 ```
 
+What proportion of the total number of variants are pathogenic under this model?
+
+```{r add proportion lines}
+prop = data.frame(lof.rate = c(0.003, 0.005, 0.01 , 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08))
+
+n_elements_point05 = nrow(conserved_fb_active) * 0.0005/prop$lof.rate
+n_elements_point1 = nrow(conserved_fb_active) * 0.001/prop$lof.rate
+n_elements_point15 = nrow(conserved_fb_active) * 0.0015/prop$lof.rate
+n_elements_point2 = nrow(conserved_fb_active) * 0.002/prop$lof.rate
+
+#n_elements_1percent = nrow(conserved) * 0.01/prop$lof.rate
+
+prop = data.frame(lof.rate = prop$lof.rate, n_elements = c(n_elements_point05, n_elements_point1, n_elements_point15, n_elements_point2), set = c(rep("0.05%", length(n_elements_point05)), rep("0.1%", length(n_elements_point1)), rep("0.15%", length(n_elements_point15)), rep("0.2%", length(n_elements_point2))))
+
+ggplot(m) + geom_tile(aes(lof.rate, n_lof, fill = probability_of_model)) +
+  scale_fill_gradient(low = "white", high = "blue", guide = guide_colorbar(title = "Bayes Factor")) + 
+  xlab("Proportion of Mutations\nResulting in Pathogenic Loss/Gain of Function") + 
+  ylab("Number of Elements with\nMonoallelic Loss/Gain of Function Mechanism") +
+  theme_bw(base_size = 18) +
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) +
+  geom_line(data = prop, aes(lof.rate, n_elements, color = set)) + geom_point(data = prop, aes(lof.rate, n_elements, color = set)) + ylim(0, 2700) + scale_color_discrete(name = "% of all regulatory mutations\nwith monoallelic mechanism")
+
+```
+
+```{r marginals}
+
+#number of elements
+r = ddply(m, "lof.rate", function(df) data.frame(p = sum(df$probability_of_model)))
+r$p = r$p/sum(r$p)
+
+# later can split by coding/noncoding
+
+ggplot(r) + geom_bar(aes(lof.rate, p), stat = "identity") +
+  xlab("Proportion of Mutations\nResulting in Pathogenic Loss/Gain of Function") + 
+  ylab("Probability Density") +
+  theme_bw(base_size = 18) +
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+
+
+#number of elements
+e = ddply(m, "n_lof", function(df) data.frame(p = sum(df$probability_of_model)))
+e$p = e$p/sum(e$p)
+
+# later can split by coding/noncoding
+
+ggplot(e) + geom_bar(aes(n_lof, p), stat = "identity") +
+  xlab("Number of Elements with Monoallelic LOF Mechanism") + 
+  ylab("Probability Density") +
+  theme_bw(base_size = 18) +
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+
+```
 
 
 Using the data we have here, we want to make a genome-wide estimate of the contribution of de novo SNVs.
@@ -184,9 +297,7 @@ obs = read.table("../data/de_novos.ddd_8k.noncoding_included.2016-06-23.DHS_broa
 obs = subset(obs, pp_dnm > 0.00781)
 obs = subset(obs, nchar(as.character(ref)) == 1 & nchar(as.character(alt)) == 1)
 
-blacklist = read.table("../data/8K_DF_Blacklist.txt", header = FALSE, sep = "\t")
-blacklist_kinship = read.table("../data/8K_kinship_blacklist.txt", header = FALSE, sep = "\t")
-blacklist = unique(c(as.character(blacklist$V1), as.character(blacklist_kinship$V1)))
+blacklist = read.table("../data/all_stable_id_blacklist.txt", header = FALSE, sep = "\t")$V1
 
 obs = subset(obs, !(person_stable_id %in% blacklist))
 
@@ -306,5 +417,29 @@ fb_dhs_sample$predicted_excess_upper[fb_dhs_sample$predicted_excess_upper < 0] =
 total_predicted = sum(fb_dhs_sample$p_snp_null*length(undiagnosed_neurodev)*fb_dhs_sample$predicted_excess)*multiplier
 total_predicted_lower = sum(fb_dhs_sample$p_snp_null*length(undiagnosed_neurodev)*fb_dhs_sample$predicted_excess_lower)*multiplier
 total_predicted_upper = sum(fb_dhs_sample$p_snp_null*length(undiagnosed_neurodev)*fb_dhs_sample$predicted_excess_upper)*multiplier
+
+```
+
+Comparing non-coding burden to coding from McRae et. al, 2017:
+
+```{r comparing to coding}
+
+mcrae_pop_size = 4293
+short_pop_size = 7930
+
+missense_excess = round(1220 * short_pop_size/mcrae_pop_size)/short_pop_size
+ptv_excess = round(576 * short_pop_size/mcrae_pop_size)/short_pop_size
+noncoding_excess = round(total_predicted)/short_pop_size
+
+df = data.frame(excess = c(noncoding_excess, ptv_excess, missense_excess, 1-(noncoding_excess + ptv_excess + missense_excess)), set = c("non-coding SNV", "PTV", "missense", "unexplained"))
+df$set = factor(df$set, levels = df$set, ordered = TRUE)
+
+ggplot(df) + geom_bar(aes(set, excess, fill = set), stat = "identity") + xlab("Variant Class") + 
+  ylab("Proportion of DDD probands") +
+  theme_bw(base_size = 18) +
+  theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank(), legend.title = element_blank()) + guides(fill = FALSE) +
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+
+
 
 ```
