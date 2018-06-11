@@ -1,4 +1,4 @@
----
+a---
 title: Figure S13 - Power Calculations with/without Annotation for very large sample
   sizes
 author: "Patrick Short"
@@ -11,9 +11,9 @@ Without an understanding of the 'enhancer code' to predict pathogenic mutations 
 ```{r power calculations}
 conserved_fb_active = read.table('../data/conserved_elements.min10_coverage.fb_active_roadmap_union.txt', header = TRUE, sep = "\t")
 
-prevalence<-1/120 # enrichment of LoF mutations in DD genes
+prevalence<-1/120 # fold-enrichment of mutations in causal sites (from LOF data)
 penetrance<-1 # penetrance of LoF mutations, to allow estimate of frequency of LoF mutations in cohort
-num.trios<-seq(1000,111e3,10e3)
+num.trios<-seq(1000,101e3,10e3)
 recurr=seq(2,6)
 num.transmissions<-num.trios*2
 thresh<-0.05/nrow(conserved_fb_active) # p value required to detect significantly mutated gene
@@ -24,10 +24,11 @@ max.DNMs<-30 # max number of DNMs to consider
 layout(t(c(1,2)))
 
 idx = 1
-num.trios <- seq(1e3,111e3,10e3)
+num.trios <- seq(1e3,101e3,10e3)
 element.store<-matrix(nrow=nrow(conserved_fb_active), ncol=length(num.trios))
 
-for (lof_density in c(0.02)) { # just loop once, for 0.02
+
+for (lof_density in c(0.035)) { # just loop once
 
   lof.rate = conserved_fb_active$p_snp_null * lof_density
   
@@ -41,7 +42,7 @@ for (lof_density in c(0.02)) { # just loop once, for 0.02
   		min.hits<-min(which(ppois(0:max.DNMs, conserved_fb_active$p_snp_null[j]*num.trios[i]*2, lower.tail=F)<thresh))
   		
   		# how likely to see this minimum number of DNMs
-  		element.store[j,i]<-ppois(min.hits-1, (1 - lof_density) * conserved_fb_active$p_snp_null[j] * 2 + lof.rate[j]*num.trios[i]*2/prevalence*penetrance, lower.tail=F)
+  		element.store[j,i]<-ppois(min.hits-1, (1 - lof_density) * conserved_fb_active$p_snp_null[j] * 2 * num.trios[i] + lof.rate[j]*num.trios[i]*2/prevalence*penetrance, lower.tail=F)
   		
   	}
   	
@@ -50,14 +51,17 @@ for (lof_density in c(0.02)) { # just loop once, for 0.02
   idx = idx + 1
   
   # boxplot of the same
-  boxplot(na.omit(element.store[,1]), na.omit(element.store[,2]), na.omit(element.store[,3]),na.omit(element.store[,4]),na.omit(element.store[,5]),na.omit(element.store[,6]),na.omit(element.store[,7]),na.omit(element.store[,8]),na.omit(element.store[,9]),na.omit(element.store[,10]), na.omit(element.store[,11]), na.omit(element.store[,12]), col="grey", outline=F, xlab="000's of trios", ylab="\npower to detect disease-associated elements", names=seq(1,111,10), main = sprintf("Pathogenic Mutation Density: %s", as.character(lof_density)), ylim = c(0,1))
+  boxplot(na.omit(element.store[,1]), na.omit(element.store[,2]), na.omit(element.store[,3]),na.omit(element.store[,4]),na.omit(element.store[,5]),na.omit(element.store[,6]),na.omit(element.store[,7]),na.omit(element.store[,8]),na.omit(element.store[,9]),na.omit(element.store[,10]), na.omit(element.store[,11]), col="grey", outline=F, xlab="000's of trios", ylab="\npower to detect disease-associated elements", names=seq(1,101,10), main = sprintf("Pathogenic Mutation Density: %s", as.character(lof_density)), ylim = c(0,1))
 }
 
 # now, suppose we could identify LOF mutations in non-coding elements
 idx = 2
-num.trios<-seq(1000,111e3,10e3)
-for (lof_density in c(0.02)) { # only loop once for 0.02
+num.trios<-seq(1000,101e3,10e3)
 
+annotation_ppv = 1 # assuming a positive predictive value of 1 gives us an upper bound
+
+
+for (lof_density in c(0.035)) { # only loop once
   lof.rate = conserved_fb_active$p_snp_null * lof_density
   
   element.store<-matrix(nrow=nrow(conserved_fb_active), ncol=length(num.trios))
@@ -67,7 +71,7 @@ for (lof_density in c(0.02)) { # only loop once for 0.02
   	for(j in seq(1,nrow(conserved_fb_active))) { 	# loop for each element
   
   		# how many DNMs needed to meet significance threshold given this number of trios in this gene
-  		min.hits<-min(which(ppois(0:max.DNMs, lof.rate[j]*num.trios[i]*2, lower.tail=F)<thresh))
+  		min.hits<-min(which(ppois(0:max.DNMs, (1/annotation_ppv) * lof.rate[j]*num.trios[i]*2, lower.tail=F)<thresh))
   		
   		# how likely to see this minimum number of DNMs
   		element.store[j,i]<-ppois(min.hits-1, lof.rate[j]*num.trios[i]*2/prevalence*penetrance, lower.tail=F)
@@ -79,7 +83,7 @@ for (lof_density in c(0.02)) { # only loop once for 0.02
   idx = idx + 1
   
   # boxplot of the same
-  boxplot(na.omit(element.store[,1]), na.omit(element.store[,2]), na.omit(element.store[,3]),na.omit(element.store[,4]),na.omit(element.store[,5]),na.omit(element.store[,6]),na.omit(element.store[,7]),na.omit(element.store[,8]),na.omit(element.store[,9]),na.omit(element.store[,10]), na.omit(element.store[,11]), na.omit(element.store[,12]), col="cyan", outline=F, xlab="000's of trios", ylab="\npower to detect disease-associated elements", names=seq(1,111,10), main = sprintf("Pathogenic Mutation Density: %s", as.character(lof_density)), ylim = c(0,1))
+  boxplot(na.omit(element.store[,1]), na.omit(element.store[,2]), na.omit(element.store[,3]),na.omit(element.store[,4]),na.omit(element.store[,5]),na.omit(element.store[,6]),na.omit(element.store[,7]),na.omit(element.store[,8]),na.omit(element.store[,9]),na.omit(element.store[,10]), na.omit(element.store[,11]), col="cyan", outline=F, xlab="000's of trios", ylab="\npower to detect disease-associated elements", names=seq(1,101,10), main = sprintf("Pathogenic Mutation Density: %s", as.character(lof_density)), ylim = c(0,1))
 }
 
 
