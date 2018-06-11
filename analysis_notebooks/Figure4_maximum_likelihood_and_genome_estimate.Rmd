@@ -7,6 +7,8 @@ output: html_document
 
 Code to generate Figure 4 of the non-coding burden paper.
 
+Can use knitr:purl to make a .R file from Rmd to run from command line.
+
 ```{r use power calc to generate ML model}
 library(ggplot2)
 library(gridExtra)
@@ -32,6 +34,11 @@ total_obs = sum(obs_vector)
 total_recurr = sum(obs_vector > 1)
 total_gws = sum(obs_vector > 3)
 
+# some math
+# prop_elements * frac_pathogenic * mu * num.trios * constant (related to specificity of target/ascertainment) = excess
+
+
+
 p_data_abc = function(n_true_elements, lof.density, obs_vector) {
   
   # simulate data
@@ -39,7 +46,7 @@ p_data_abc = function(n_true_elements, lof.density, obs_vector) {
   lof.rate = conserved_fb_active$p_snp_null * lof.density
   
   # there are n_true_elements which will have mutations at rate
-  rate_parameter_true_elements = (lof.rate*num.trios/prevalence*penetrance + conserved_fb_active$p_snp_null*num.trios)[true_element_idx]
+  rate_parameter_true_elements = (lof.rate*num.trios*0.03/prevalence*penetrance + conserved_fb_active$p_snp_null*num.trios)[true_element_idx]
   
   # there are n - n_true elements which have mutations at rate
   rate_parameter_false_elements = (conserved_fb_active$p_snp_null*num.trios)[-true_element_idx]
@@ -74,6 +81,10 @@ p_data_abc = function(n_true_elements, lof.density, obs_vector) {
 n_lof = seq(1, 2601, 20)
 lof.multiplier = seq(0.0001,.1001, 0.001)
 
+n_lof = seq(1, 301, 20)
+lof.multiplier = seq(0.001,.1001, 0.01)
+
+
 store_likelihood <-matrix(ncol=length(n_lof), nrow=length(lof.multiplier))
 colnames(store_likelihood) = n_lof
 rownames(store_likelihood) = lof.multiplier
@@ -82,7 +93,7 @@ rownames(store_likelihood) = lof.multiplier
 
 #### actually_run default to FALSE because this takes a long time and needs a computing cluster - set to true to run again, otherwise loads from data
 
-actually_run = FALSE
+actually_run = T
 
 if (actually_run == TRUE) {
   for(i in seq(1,length(n_lof))) {
@@ -137,6 +148,14 @@ thresh90 = m$probability_of_model[order(m$probability_of_model)][which.min(abs(c
 thresh50 = m$probability_of_model[order(m$probability_of_model)][which.min(abs(c - 0.5))]
 
 ggplot(m) + geom_tile(aes(lof.rate, n_lof, fill = probability_of_model)) + geom_contour(aes(lof.rate, n_lof, z=probability_of_model),breaks=c(thresh90, thresh50),colour="red") +
+    scale_fill_gradient(low = "white", high = "blue", guide = guide_colorbar(title = "Likelihood Ratio")) + 
+    xlab("Proportion of Mutations\nResulting in Pathogenic Loss/Gain of Function") + 
+    ylab("Number of Elements with\nMonoallelic Loss/Gain of Function Mechanism") +
+    theme_bw(base_size = 18) +
+    theme(strip.text = element_text(color="black"),strip.background = element_rect(fill="white", size=0),panel.border = element_blank()) + 
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + ylim(0, max(m$n_lof)) + xlim(0, max(m$lof.rate)) + ggtitle("")
+
+ggplot(m) + geom_tile(aes(lof.rate, n_lof, fill = probability_of_model)) +
     scale_fill_gradient(low = "white", high = "blue", guide = guide_colorbar(title = "Likelihood Ratio")) + 
     xlab("Proportion of Mutations\nResulting in Pathogenic Loss/Gain of Function") + 
     ylab("Number of Elements with\nMonoallelic Loss/Gain of Function Mechanism") +
@@ -335,7 +354,7 @@ methyl_correction <- function(elements) {
 
 
 
-ddd_fb_dhs = methyl_correction(ddd_fb_dhs)  # to do - add methyl correction code to the script
+ddd_fb_dhs = methyl_correction(ddd_fb_dhs)
 
 ddd_fb_dhs_intervals = GRanges(seqnames=ddd_fb_dhs$chr, IRanges(start = ddd_fb_dhs$start, width = ddd_fb_dhs$stop - ddd_fb_dhs$start + 1))
 ddd_fb_dhs$phastcons100 = scores(phastCons100way.UCSC.hg19, ddd_fb_dhs_intervals)
